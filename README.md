@@ -6,6 +6,18 @@ Tab Out replaces your Chrome new tab page with a mission dashboard: it groups yo
 
 ---
 
+## Install with a coding agent
+
+Send your coding agent (Claude Code, Cursor, Windsurf, etc.) this repo URL and say "install this":
+
+```
+https://github.com/zarazhangrui/tab-out
+```
+
+The agent will walk you through choosing your LLM provider and setting up your API key.
+
+---
+
 ## What it does
 
 - **Groups your open tabs into missions** using AI — tabs about the same topic cluster together automatically
