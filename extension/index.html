@@ -47,6 +47,24 @@
   </div>
 
   <!-- ================================================================
+       FAVORITES — saved websites for quick access
+       ================================================================ -->
+  <section class="favorites-section" id="favoritesSection">
+    <div class="section-header favorites-header">
+      <h2>Favorites</h2>
+      <div class="section-line"></div>
+      <button class="favorite-toggle" data-action="toggle-favorite-form" title="Add favorite" aria-label="Add favorite">+</button>
+    </div>
+    <form class="favorite-form" id="favoriteForm" style="display:none">
+      <input type="text" class="favorite-input" id="favoriteName" placeholder="Name" autocomplete="off">
+      <input type="text" class="favorite-input favorite-url-input" id="favoriteUrl" placeholder="https://example.com" autocomplete="off" required>
+      <button class="favorite-add" type="submit">Add</button>
+    </form>
+    <div class="favorite-list" id="favoriteList"></div>
+    <div class="favorite-empty" id="favoriteEmpty" style="display:none"></div>
+  </section>
+
+  <!-- ================================================================
        MAIN CONTENT AREA — two-column layout
        Left: open tabs (domain/mission cards)
        Right: saved for later checklist
@@ -107,7 +125,7 @@
       </div>
     </div>
     <div class="last-refresh">
-      <span style="color: var(--muted); font-size: 11px;"><a href="https://github.com/zarazhangrui/tab-out" target="_top" style="color: var(--muted); text-decoration: underline; text-underline-offset: 2px;">Tab Out</a> by <a href="https://x.com/zarazhangrui" target="_top" style="color: var(--muted); text-decoration: underline; text-underline-offset: 2px;">Zara</a></span>
+      <span style="color: var(--muted); font-size: 11px;"><a href="https://github.com/BH-M87/tab-out" target="_top" style="color: var(--muted); text-decoration: underline; text-underline-offset: 2px;">Tab Out</a> by <a href="https://github.com/BH-M87" target="_top" style="color: var(--muted); text-decoration: underline; text-underline-offset: 2px;">BH-M87</a></span>
     </div>
   </footer>
 
