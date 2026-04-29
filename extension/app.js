@@ -26,6 +26,7 @@
 // All open tabs — populated by fetchOpenTabs()
 let openTabs = [];
 let favoriteNameWasEdited = false;
+let favoriteDragState = null;
 
 /**
  * fetchOpenTabs()
@@ -386,6 +387,22 @@ async function deleteFavoriteSite(id) {
   await chrome.storage.local.set({
     favorites: favorites.filter(site => site.id !== id),
   });
+}
+
+async function reorderFavoriteSites(orderedIds) {
+  if (!Array.isArray(orderedIds) || orderedIds.length === 0) return;
+
+  const { favorites = [] } = await chrome.storage.local.get('favorites');
+  const byId = new Map(favorites.map(site => [site.id, site]));
+  const reordered = orderedIds
+    .map(id => byId.get(id))
+    .filter(Boolean);
+
+  for (const site of favorites) {
+    if (!orderedIds.includes(site.id)) reordered.push(site);
+  }
+
+  await chrome.storage.local.set({ favorites: reordered });
 }
 
 
@@ -1050,7 +1067,17 @@ function renderFavoriteItem(site) {
   const safeId = escapeHtml(site.id);
 
   return `
-    <div class="favorite-item" data-favorite-id="${safeId}">
+    <div class="favorite-item" data-action="drag-favorite" data-favorite-id="${safeId}" draggable="true">
+      <span class="favorite-drag-handle" title="Drag to reorder" aria-hidden="true">
+        <svg xmlns="http://www.w3.org/2000/svg" fill="currentColor" viewBox="0 0 16 16">
+          <circle cx="5" cy="4" r="1.1" />
+          <circle cx="11" cy="4" r="1.1" />
+          <circle cx="5" cy="8" r="1.1" />
+          <circle cx="11" cy="8" r="1.1" />
+          <circle cx="5" cy="12" r="1.1" />
+          <circle cx="11" cy="12" r="1.1" />
+        </svg>
+      </span>
       <button class="favorite-link" data-action="open-favorite" data-favorite-url="${safeUrl}" title="${safeTitle}">
         ${faviconUrl ? `<img class="favorite-favicon" src="${faviconUrl}" alt="" onerror="this.style.display='none'">` : ''}
         <span class="favorite-title">${safeTitle}</span>
@@ -1657,6 +1684,97 @@ document.addEventListener('click', async (e) => {
     showToast('All tabs closed. Fresh start.');
     return;
   }
+});
+
+function getFavoriteDropPlacement(item, event) {
+  const rect = item.getBoundingClientRect();
+  const midY = rect.top + rect.height / 2;
+  const midX = rect.left + rect.width / 2;
+  const sameRowBand = rect.height / 3;
+
+  if (Math.abs(event.clientY - midY) < sameRowBand) {
+    return event.clientX < midX ? 'before' : 'after';
+  }
+  return event.clientY < midY ? 'before' : 'after';
+}
+
+function clearFavoriteDragClasses() {
+  document.querySelectorAll('.favorite-item.dragging, .favorite-item.drag-over').forEach(item => {
+    item.classList.remove('dragging', 'drag-over');
+  });
+}
+
+document.addEventListener('dragstart', (e) => {
+  const item = e.target.closest('.favorite-item[data-action="drag-favorite"]');
+  if (!item) return;
+
+  const id = item.dataset.favoriteId;
+  if (!id) return;
+
+  favoriteDragState = { id, changed: false, didDrop: false };
+  if (e.dataTransfer) {
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', id);
+  }
+
+  requestAnimationFrame(() => item.classList.add('dragging'));
+});
+
+document.addEventListener('dragover', (e) => {
+  if (!favoriteDragState) return;
+
+  const list = e.target.closest('#favoriteList');
+  if (!list) return;
+
+  e.preventDefault();
+  if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
+
+  const dragging = list.querySelector(`.favorite-item[data-favorite-id="${CSS.escape(favoriteDragState.id)}"]`);
+  if (!dragging) return;
+
+  const target = e.target.closest('.favorite-item[data-action="drag-favorite"]');
+  list.querySelectorAll('.favorite-item.drag-over').forEach(item => item.classList.remove('drag-over'));
+
+  if (!target) {
+    list.appendChild(dragging);
+    favoriteDragState.changed = true;
+    return;
+  }
+
+  if (target === dragging) return;
+
+  const placement = getFavoriteDropPlacement(target, e);
+  target.classList.add('drag-over');
+  list.insertBefore(dragging, placement === 'after' ? target.nextSibling : target);
+  favoriteDragState.changed = true;
+});
+
+document.addEventListener('drop', async (e) => {
+  if (!favoriteDragState) return;
+
+  const list = e.target.closest('#favoriteList');
+  if (!list) return;
+
+  e.preventDefault();
+  favoriteDragState.didDrop = true;
+
+  const orderedIds = Array.from(list.querySelectorAll('.favorite-item'))
+    .map(item => item.dataset.favoriteId)
+    .filter(Boolean);
+
+  await reorderFavoriteSites(orderedIds);
+  clearFavoriteDragClasses();
+  showToast('Favorites reordered');
+});
+
+document.addEventListener('dragend', async () => {
+  if (!favoriteDragState) return;
+
+  const shouldRestore = favoriteDragState.changed && !favoriteDragState.didDrop;
+  favoriteDragState = null;
+  clearFavoriteDragClasses();
+
+  if (shouldRestore) await renderFavoritesSection();
 });
 
 document.addEventListener('submit', async (e) => {

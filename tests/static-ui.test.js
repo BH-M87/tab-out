@@ -31,6 +31,20 @@ test('favorites are persisted, rendered, opened, and removed from chrome.storage
   assert.match(appJs, /chrome\.tabs\.create/);
 });
 
+test('favorites support drag-and-drop reordering with persisted order', () => {
+  assert.match(appJs, /async function reorderFavoriteSites\(/);
+  assert.match(appJs, /draggable="true"/);
+  assert.match(appJs, /data-action="drag-favorite"/);
+  assert.match(appJs, /favoriteDragState/);
+  assert.match(appJs, /addEventListener\('dragstart'/);
+  assert.match(appJs, /addEventListener\('dragover'/);
+  assert.match(appJs, /addEventListener\('drop'/);
+  assert.match(appJs, /await reorderFavoriteSites\(/);
+  assert.match(css, /\.favorite-item\.dragging/);
+  assert.match(css, /\.favorite-item\.drag-over/);
+  assert.match(css, /\.favorite-drag-handle/);
+});
+
 test('archived saved tabs can be deleted from the archive list', () => {
   assert.match(appJs, /async function deleteSavedTab\(/);
   assert.match(appJs, /data-action="delete-archive-item"/);
