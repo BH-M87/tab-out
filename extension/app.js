@@ -1777,6 +1777,12 @@ document.addEventListener('dragend', async () => {
   if (shouldRestore) await renderFavoritesSection();
 });
 
+chrome.storage.onChanged.addListener((changes, areaName) => {
+  if (areaName === 'local' && changes.favorites) {
+    renderFavoritesSection();
+  }
+});
+
 document.addEventListener('submit', async (e) => {
   if (e.target.id !== 'favoriteForm') return;
   e.preventDefault();

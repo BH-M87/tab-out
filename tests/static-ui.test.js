@@ -6,7 +6,9 @@ const test = require('node:test');
 const root = path.resolve(__dirname, '..');
 const indexHtml = fs.readFileSync(path.join(root, 'extension/index.html'), 'utf8');
 const appJs = fs.readFileSync(path.join(root, 'extension/app.js'), 'utf8');
+const backgroundJs = fs.readFileSync(path.join(root, 'extension/background.js'), 'utf8');
 const css = fs.readFileSync(path.join(root, 'extension/style.css'), 'utf8');
+const manifest = JSON.parse(fs.readFileSync(path.join(root, 'extension/manifest.json'), 'utf8'));
 
 test('renders a top favorites section before the dashboard columns', () => {
   assert.match(indexHtml, /id="favoritesSection"/);
@@ -43,6 +45,24 @@ test('favorites support drag-and-drop reordering with persisted order', () => {
   assert.match(css, /\.favorite-item\.dragging/);
   assert.match(css, /\.favorite-item\.drag-over/);
   assert.match(css, /\.favorite-drag-handle/);
+});
+
+test('toolbar icon click saves the current page to favorites', () => {
+  assert.ok(manifest.action);
+  assert.match(backgroundJs, /chrome\.action\.onClicked\.addListener/);
+  assert.match(backgroundJs, /async function saveCurrentTabAsFavorite\(/);
+  assert.match(backgroundJs, /function isFavoriteCandidateUrl\(/);
+  assert.match(backgroundJs, /chrome\.storage\.local\.get\('favorites'\)/);
+  assert.match(backgroundJs, /chrome\.storage\.local\.set\(\{ favorites/);
+  assert.match(backgroundJs, /existing\.title = title/);
+  assert.match(backgroundJs, /favorites\.unshift/);
+});
+
+test('dashboard refreshes favorites when toolbar click updates storage', () => {
+  assert.match(appJs, /chrome\.storage\.onChanged\.addListener/);
+  assert.match(appJs, /changes\.favorites/);
+  assert.match(appJs, /areaName === 'local'/);
+  assert.match(appJs, /renderFavoritesSection\(\)/);
 });
 
 test('archived saved tabs can be deleted from the archive list', () => {
