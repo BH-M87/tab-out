@@ -1528,9 +1528,85 @@ footer { animation: fadeUp 0.5s ease 0.65s both; }
   top: 32px;
   max-height: calc(100vh - 64px);
   overflow-y: auto;
+  transition: width 0.28s ease, opacity 0.22s ease, transform 0.28s ease, margin-right 0.28s ease;
 }
 
-/* On narrow screens, stack vertically */
+/* Collapsed state: column slides out and shrinks to free space */
+body.deferred-collapsed .deferred-column {
+  width: 0;
+  margin-right: -32px; /* cancel the dashboard-columns gap */
+  transform: translateX(24px);
+  opacity: 0;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+/* Small collapse button at the LEFT of the Saved for Later section header.
+   Lives inside the section header so it scrolls naturally with the sidebar
+   and is far from the "Close all tabs" button on the opposite side. */
+.deferred-collapse-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  background: transparent;
+  color: var(--muted);
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  opacity: 0.5;
+  transition: opacity 0.15s, color 0.15s, background 0.15s;
+  flex-shrink: 0;
+}
+
+.deferred-collapse-btn svg {
+  width: 12px;
+  height: 12px;
+}
+
+.deferred-collapse-btn:hover {
+  opacity: 1;
+  color: var(--ink);
+  background: rgba(154, 145, 138, 0.12);
+}
+
+/* Inline reopen button — sits at the right end of the Open Tabs section header.
+   Hidden by default; only shown when the sidebar is collapsed and has content. */
+.deferred-reopen-inline {
+  display: none;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  background: transparent;
+  color: var(--muted);
+  border: 1px solid rgba(154, 145, 138, 0.22);
+  border-radius: 4px;
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: color 0.15s, background 0.15s, border-color 0.15s;
+}
+
+.deferred-reopen-inline svg {
+  width: 12px;
+  height: 12px;
+}
+
+.deferred-reopen-inline:hover {
+  color: var(--ink);
+  background: rgba(154, 145, 138, 0.08);
+  border-color: rgba(154, 145, 138, 0.4);
+}
+
+body.deferred-collapsed.deferred-has-content .deferred-reopen-inline {
+  display: inline-flex;
+}
+
+/* On narrow screens, stack vertically and disable the slide-out behavior. */
 @media (max-width: 800px) {
   .dashboard-columns {
     flex-direction: column;
@@ -1538,6 +1614,17 @@ footer { animation: fadeUp 0.5s ease 0.65s both; }
   .deferred-column {
     width: 100%;
     position: static;
+  }
+  body.deferred-collapsed .deferred-column {
+    width: 100%;
+    margin-right: 0;
+    transform: none;
+    opacity: 1;
+    pointer-events: auto;
+    overflow-y: auto;
+  }
+  body.deferred-collapsed.deferred-has-content .deferred-reopen-inline {
+    display: none;
   }
 }
 

@@ -402,6 +402,24 @@ async function restoreArchivedTab(id) {
 }
 
 /**
+ * getDeferredCollapsed() / setDeferredCollapsed(value)
+ *
+ * Tracks whether the "Saved for Later" sidebar is collapsed.
+ */
+async function getDeferredCollapsed() {
+  const { deferredCollapsed = false } = await chrome.storage.local.get('deferredCollapsed');
+  return Boolean(deferredCollapsed);
+}
+
+async function setDeferredCollapsed(value) {
+  await chrome.storage.local.set({ deferredCollapsed: Boolean(value) });
+}
+
+function applyDeferredCollapsed(collapsed) {
+  document.body.classList.toggle('deferred-collapsed', Boolean(collapsed));
+}
+
+/**
  * deleteSavedTab(id)
  *
  * Permanently removes a saved tab from storage.
@@ -1691,10 +1709,12 @@ async function renderDeferredColumn() {
     // Hide the entire column if there's nothing to show
     if (active.length === 0 && archived.length === 0) {
       column.style.display = 'none';
+      document.body.classList.remove('deferred-has-content');
       return;
     }
 
     column.style.display = 'block';
+    document.body.classList.add('deferred-has-content');
 
     // Render active checklist items
     if (active.length > 0) {
@@ -1720,6 +1740,7 @@ async function renderDeferredColumn() {
   } catch (err) {
     console.warn('[tab-out] Could not load saved tabs:', err);
     column.style.display = 'none';
+    document.body.classList.remove('deferred-has-content');
   }
 }
 
@@ -1800,6 +1821,9 @@ async function renderStaticDashboard() {
   const dateEl     = document.getElementById('dateDisplay');
   if (greetingEl) greetingEl.textContent = getGreeting();
   if (dateEl)     dateEl.textContent     = getDateDisplay();
+
+  // --- Sidebar collapsed state ---
+  applyDeferredCollapsed(await getDeferredCollapsed());
 
   // --- Favorites ---
   await renderFavoritesSection();
@@ -2103,6 +2127,14 @@ document.addEventListener('click', async (e) => {
     const mode = actionEl.dataset.sortMode;
     await setFavoriteSortMode(mode);
     await renderFavoritesSection();
+    return;
+  }
+
+  // ---- Collapse/expand the Saved for Later sidebar ----
+  if (action === 'toggle-deferred-collapsed') {
+    const next = !(await getDeferredCollapsed());
+    await setDeferredCollapsed(next);
+    applyDeferredCollapsed(next);
     return;
   }
 

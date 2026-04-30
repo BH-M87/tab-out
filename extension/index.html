@@ -86,6 +86,10 @@
         <h2 id="openTabsSectionTitle">Right now</h2>
         <div class="section-line"></div>
         <div class="section-count" id="openTabsSectionCount"></div>
+        <button class="deferred-reopen-inline" data-action="toggle-deferred-collapsed" type="button" title="Show Saved for Later">
+          Saved for later
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M15.75 19.5 8.25 12l7.5-7.5" /></svg>
+        </button>
       </div>
       <div class="missions" id="openTabsMissions"></div>
     </div>
@@ -93,6 +97,9 @@
     <!-- RIGHT COLUMN: Saved for Later checklist -->
     <div class="deferred-column" id="deferredColumn" style="display:none">
       <div class="section-header">
+        <button class="deferred-collapse-btn" data-action="toggle-deferred-collapsed" type="button" title="Hide Saved for Later" aria-label="Hide Saved for Later">
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="m8.25 4.5 7.5 7.5-7.5 7.5" /></svg>
+        </button>
         <h2>Saved for later</h2>
         <div class="section-line"></div>
         <div class="section-count" id="deferredCount"></div>
