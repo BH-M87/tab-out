@@ -33,10 +33,23 @@ let dashboardRefreshInFlight = false;
 let dashboardRefreshQueued = false;
 let dashboardTabListenersRegistered = false;
 let dashboardRefreshIgnoreUntil = 0;
+let lastUndoAction = null;
+let toastTimer = null;
 const dashboardRefreshDelayMs = 150;
 const localTabActionRefreshIgnoreMs = 800;
 const favoriteGroupPreviewLimit = 3;
 const favoriteSortModes = ['custom', 'alphabet', 'created', 'visited'];
+
+function getTabSnapshot(tab) {
+  if (!tab || !tab.url) return null;
+  return {
+    url: tab.url,
+    title: tab.title || tab.url,
+    windowId: tab.windowId,
+    index: tab.index,
+    pinned: !!tab.pinned,
+  };
+}
 
 /**
  * fetchOpenTabs()
@@ -91,7 +104,7 @@ async function closeTabsByUrls(urls) {
   }
 
   const allTabs = await chrome.tabs.query({});
-  const toClose = allTabs
+  const tabsToClose = allTabs
     .filter(tab => {
       const tabUrl = tab.url || '';
       if (tabUrl.startsWith('file://') && exactUrls.has(tabUrl)) return true;
@@ -99,14 +112,15 @@ async function closeTabsByUrls(urls) {
         const tabHostname = new URL(tabUrl).hostname;
         return tabHostname && targetHostnames.includes(tabHostname);
       } catch { return false; }
-    })
-    .map(tab => tab.id);
+    });
+  const toClose = tabsToClose.map(tab => tab.id);
 
   if (toClose.length > 0) {
     ignoreDashboardRefreshForLocalTabAction();
     await chrome.tabs.remove(toClose);
   }
   await fetchOpenTabs();
+  return tabsToClose.map(getTabSnapshot).filter(Boolean);
 }
 
 /**
@@ -119,12 +133,14 @@ async function closeTabsExact(urls) {
   if (!urls || urls.length === 0) return;
   const urlSet = new Set(urls);
   const allTabs = await chrome.tabs.query({});
-  const toClose = allTabs.filter(t => urlSet.has(t.url)).map(t => t.id);
+  const tabsToClose = allTabs.filter(t => urlSet.has(t.url));
+  const toClose = tabsToClose.map(t => t.id);
   if (toClose.length > 0) {
     ignoreDashboardRefreshForLocalTabAction();
     await chrome.tabs.remove(toClose);
   }
   await fetchOpenTabs();
+  return tabsToClose.map(getTabSnapshot).filter(Boolean);
 }
 
 /**
@@ -171,25 +187,27 @@ async function focusTab(url) {
  */
 async function closeDuplicateTabs(urls, keepOne = true) {
   const allTabs = await chrome.tabs.query({});
-  const toClose = [];
+  const tabsToClose = [];
 
   for (const url of urls) {
     const matching = allTabs.filter(t => t.url === url);
     if (keepOne) {
       const keep = matching.find(t => t.active) || matching[0];
       for (const tab of matching) {
-        if (tab.id !== keep.id) toClose.push(tab.id);
+        if (tab.id !== keep.id) tabsToClose.push(tab);
       }
     } else {
-      for (const tab of matching) toClose.push(tab.id);
+      for (const tab of matching) tabsToClose.push(tab);
     }
   }
 
+  const toClose = tabsToClose.map(tab => tab.id);
   if (toClose.length > 0) {
     ignoreDashboardRefreshForLocalTabAction();
     await chrome.tabs.remove(toClose);
   }
   await fetchOpenTabs();
+  return tabsToClose.map(getTabSnapshot).filter(Boolean);
 }
 
 /**
@@ -215,12 +233,14 @@ async function closeTabOutDupes() {
     tabOutTabs.find(t => t.active && t.windowId === currentWindow.id) ||
     tabOutTabs.find(t => t.active) ||
     tabOutTabs[0];
-  const toClose = tabOutTabs.filter(t => t.id !== keep.id).map(t => t.id);
+  const tabsToClose = tabOutTabs.filter(t => t.id !== keep.id);
+  const toClose = tabsToClose.map(t => t.id);
   if (toClose.length > 0) {
     ignoreDashboardRefreshForLocalTabAction();
     await chrome.tabs.remove(toClose);
   }
   await fetchOpenTabs();
+  return tabsToClose.map(getTabSnapshot).filter(Boolean);
 }
 
 
@@ -253,15 +273,17 @@ async function closeTabOutDupes() {
  */
 async function saveTabForLater(tab) {
   const { deferred = [] } = await chrome.storage.local.get('deferred');
-  deferred.push({
+  const savedItem = {
     id:        Date.now().toString(),
     url:       tab.url,
     title:     tab.title,
     savedAt:   new Date().toISOString(),
     completed: false,
     dismissed: false,
-  });
+  };
+  deferred.push(savedItem);
   await chrome.storage.local.set({ deferred });
+  return savedItem;
 }
 
 /**
@@ -755,16 +777,156 @@ function animateCardOut(card) {
   }, 300);
 }
 
+function clearUndoAction() {
+  lastUndoAction = null;
+  const revertButton = document.getElementById('toastRevert');
+  if (revertButton) revertButton.style.display = 'none';
+}
+
+function setUndoAction(undoAction) {
+  lastUndoAction = undoAction || null;
+  const revertButton = document.getElementById('toastRevert');
+  if (revertButton) revertButton.style.display = undoAction ? 'inline-flex' : 'none';
+}
+
+async function restoreClosedTabs(tabs = []) {
+  const restorableTabs = tabs.filter(tab => tab && tab.url);
+  if (restorableTabs.length === 0) return;
+
+  for (const tab of restorableTabs) {
+    const createProps = {
+      url: tab.url,
+      active: false,
+      pinned: !!tab.pinned,
+    };
+    if (Number.isInteger(tab.windowId)) createProps.windowId = tab.windowId;
+    if (Number.isInteger(tab.index)) createProps.index = tab.index;
+
+    try {
+      ignoreDashboardRefreshForLocalTabAction();
+      await chrome.tabs.create(createProps);
+    } catch {
+      delete createProps.windowId;
+      delete createProps.index;
+      ignoreDashboardRefreshForLocalTabAction();
+      await chrome.tabs.create(createProps);
+    }
+  }
+
+  await fetchOpenTabs();
+  await renderStaticDashboard();
+}
+
+function createClosedTabsUndo(tabs = []) {
+  const snapshots = tabs.map(getTabSnapshot).filter(Boolean);
+  if (snapshots.length === 0) return null;
+
+  return {
+    message: snapshots.length === 1 ? 'Tab restored' : 'Tabs restored',
+    run: () => restoreClosedTabs(snapshots),
+  };
+}
+
+async function getFavoriteDeleteSnapshot(id) {
+  const { favorites = [] } = await chrome.storage.local.get('favorites');
+  const index = favorites.findIndex(site => site.id === id);
+  if (index === -1) return null;
+  return { item: favorites[index], index };
+}
+
+async function restoreFavoriteSnapshot(snapshot) {
+  if (!snapshot || !snapshot.item) return;
+  const { favorites = [] } = await chrome.storage.local.get('favorites');
+  const withoutExisting = favorites.filter(site => site.id !== snapshot.item.id);
+  const insertAt = Math.min(Math.max(snapshot.index || 0, 0), withoutExisting.length);
+  withoutExisting.splice(insertAt, 0, snapshot.item);
+  await chrome.storage.local.set({ favorites: withoutExisting });
+  await renderFavoritesSection();
+  syncOpenTabFavoriteButtons(withoutExisting);
+}
+
+function createFavoriteDeleteUndo(snapshot) {
+  if (!snapshot) return null;
+  return {
+    message: 'Favorite restored',
+    run: () => restoreFavoriteSnapshot(snapshot),
+  };
+}
+
+async function getSavedTabDeleteSnapshot(id) {
+  const { deferred = [] } = await chrome.storage.local.get('deferred');
+  const index = deferred.findIndex(item => item.id === id);
+  if (index === -1) return null;
+  return { item: deferred[index], index };
+}
+
+async function restoreSavedTabSnapshot(snapshot, overrides = {}) {
+  if (!snapshot || !snapshot.item) return;
+  const { deferred = [] } = await chrome.storage.local.get('deferred');
+  const restoredItem = { ...snapshot.item, ...overrides };
+  const withoutExisting = deferred.filter(item => item.id !== restoredItem.id);
+  const insertAt = Math.min(Math.max(snapshot.index || 0, 0), withoutExisting.length);
+  withoutExisting.splice(insertAt, 0, restoredItem);
+  await chrome.storage.local.set({ deferred: withoutExisting });
+  await renderDeferredColumn();
+}
+
+function createSavedTabDeleteUndo(snapshot, overrides = {}) {
+  if (!snapshot) return null;
+  return {
+    message: 'Saved tab restored',
+    run: () => restoreSavedTabSnapshot(snapshot, overrides),
+  };
+}
+
+function createSavedAndClosedTabUndo(savedSnapshot, closedTabs = []) {
+  const restoreTabs = createClosedTabsUndo(closedTabs);
+  return {
+    message: 'Tab restored',
+    run: async () => {
+      if (savedSnapshot) await deleteSavedTab(savedSnapshot.item.id);
+      if (restoreTabs) await restoreTabs.run();
+      await renderDeferredColumn();
+    },
+  };
+}
+
+async function runLastUndoAction() {
+  if (!lastUndoAction) return;
+  const action = lastUndoAction;
+  clearUndoAction();
+  try {
+    await action.run();
+    showToast(action.message || 'Reverted');
+  } catch (err) {
+    console.error('[tab-out] Failed to revert last action:', err);
+    showToast('Could not revert');
+  }
+}
+
 /**
- * showToast(message)
+ * showToast(message, undoAction)
  *
  * Brief pop-up notification at the bottom of the screen.
  */
-function showToast(message) {
+function showToast(message, undoAction = null) {
   const toast = document.getElementById('toast');
-  document.getElementById('toastText').textContent = message;
+  const text = document.getElementById('toastText');
+  if (!toast || !text) return;
+
+  clearTimeout(toastTimer);
+  text.textContent = message;
+  if (undoAction) {
+    setUndoAction(undoAction);
+  } else {
+    clearUndoAction();
+  }
   toast.classList.add('visible');
-  setTimeout(() => toast.classList.remove('visible'), 2500);
+
+  toastTimer = setTimeout(() => {
+    toast.classList.remove('visible');
+    clearUndoAction();
+  }, undoAction ? 5000 : 2500);
 }
 
 /**
@@ -1787,6 +1949,13 @@ document.addEventListener('click', async (e) => {
 
   const action = actionEl.dataset.action;
 
+  // ---- Revert the most recent delete/close operation ----
+  if (action === 'execute-undo') {
+    e.preventDefault();
+    await runLastUndoAction();
+    return;
+  }
+
   // ---- Show/hide the compact favorite add form ----
   if (action === 'toggle-favorite-form') {
     const form = document.getElementById('favoriteForm');
@@ -1852,6 +2021,7 @@ document.addEventListener('click', async (e) => {
     const id = actionEl.dataset.favoriteId;
     if (!id) return;
 
+    const undoSnapshot = await getFavoriteDeleteSnapshot(id);
     await deleteFavoriteSite(id);
     const item = actionEl.closest('.favorite-item');
     if (item) {
@@ -1860,13 +2030,13 @@ document.addEventListener('click', async (e) => {
     } else {
       await renderFavoritesSection();
     }
-    showToast('Favorite deleted');
+    showToast('Favorite deleted', createFavoriteDeleteUndo(undoSnapshot));
     return;
   }
 
   // ---- Close duplicate Tab Out tabs ----
   if (action === 'close-tabout-dupes') {
-    await closeTabOutDupes();
+    const closedTabs = await closeTabOutDupes();
     playCloseSound();
     const banner = document.getElementById('tabOutDupeBanner');
     if (banner) {
@@ -1874,7 +2044,7 @@ document.addEventListener('click', async (e) => {
       banner.style.opacity = '0';
       setTimeout(() => { banner.style.display = 'none'; banner.style.opacity = '1'; }, 400);
     }
-    showToast('Closed extra Tab Out tabs');
+    showToast('Closed extra Tab Out tabs', createClosedTabsUndo(closedTabs));
     return;
   }
 
@@ -1907,9 +2077,10 @@ document.addEventListener('click', async (e) => {
     try {
       const existingFavorite = await getFavoriteByUrl(tabUrl);
       if (existingFavorite) {
+        const undoSnapshot = await getFavoriteDeleteSnapshot(existingFavorite.id);
         await deleteFavoriteSite(existingFavorite.id);
         setOpenTabFavoriteButtons(tabUrl, false);
-        showToast('Removed from favorites');
+        showToast('Removed from favorites', createFavoriteDeleteUndo(undoSnapshot));
       } else {
         await saveFavoriteSite({ title: tabTitle, url: tabUrl });
         setOpenTabFavoriteButtons(tabUrl, true);
@@ -1932,6 +2103,7 @@ document.addEventListener('click', async (e) => {
     // Close the tab in Chrome directly
     const allTabs = await chrome.tabs.query({});
     const match   = allTabs.find(t => t.url === tabUrl);
+    const closedTabs = match ? [getTabSnapshot(match)].filter(Boolean) : [];
     if (match) {
       ignoreDashboardRefreshForLocalTabAction();
       await chrome.tabs.remove(match.id);
@@ -1965,7 +2137,7 @@ document.addEventListener('click', async (e) => {
     const statTabs = document.getElementById('statTabs');
     if (statTabs) statTabs.textContent = openTabs.length;
 
-    showToast('Tab closed');
+    showToast('Tab closed', createClosedTabsUndo(closedTabs));
     return;
   }
 
@@ -1976,9 +2148,10 @@ document.addEventListener('click', async (e) => {
     const tabTitle = actionEl.dataset.tabTitle || tabUrl;
     if (!tabUrl) return;
 
+    let savedItem = null;
     // Save to chrome.storage.local
     try {
-      await saveTabForLater({ url: tabUrl, title: tabTitle });
+      savedItem = await saveTabForLater({ url: tabUrl, title: tabTitle });
     } catch (err) {
       console.error('[tab-out] Failed to save tab:', err);
       showToast('Failed to save tab');
@@ -1988,6 +2161,7 @@ document.addEventListener('click', async (e) => {
     // Close the tab in Chrome
     const allTabs = await chrome.tabs.query({});
     const match   = allTabs.find(t => t.url === tabUrl);
+    const closedTabs = match ? [getTabSnapshot(match)].filter(Boolean) : [];
     if (match) {
       ignoreDashboardRefreshForLocalTabAction();
       await chrome.tabs.remove(match.id);
@@ -2003,7 +2177,8 @@ document.addEventListener('click', async (e) => {
       setTimeout(() => chip.remove(), 200);
     }
 
-    showToast('Saved for later');
+    const savedSnapshot = savedItem ? { item: savedItem, index: Number.MAX_SAFE_INTEGER } : null;
+    showToast('Saved for later', createSavedAndClosedTabUndo(savedSnapshot, closedTabs));
     await renderDeferredColumn();
     return;
   }
@@ -2035,6 +2210,7 @@ document.addEventListener('click', async (e) => {
     const id = actionEl.dataset.deferredId;
     if (!id) return;
 
+    const undoSnapshot = await getSavedTabDeleteSnapshot(id);
     await dismissSavedTab(id);
 
     const item = actionEl.closest('.deferred-item');
@@ -2045,6 +2221,7 @@ document.addEventListener('click', async (e) => {
         renderDeferredColumn();
       }, 300);
     }
+    showToast('Saved tab dismissed', createSavedTabDeleteUndo(undoSnapshot, { dismissed: false }));
     return;
   }
 
@@ -2053,6 +2230,7 @@ document.addEventListener('click', async (e) => {
     const id = actionEl.dataset.deferredId;
     if (!id) return;
 
+    const undoSnapshot = await getSavedTabDeleteSnapshot(id);
     await deleteSavedTab(id);
     const item = actionEl.closest('.archive-item');
     if (item) {
@@ -2061,7 +2239,7 @@ document.addEventListener('click', async (e) => {
     } else {
       await renderDeferredColumn();
     }
-    showToast('Archived tab deleted');
+    showToast('Archived tab deleted', createSavedTabDeleteUndo(undoSnapshot));
     return;
   }
 
@@ -2078,11 +2256,9 @@ document.addEventListener('click', async (e) => {
     // must use exact URL matching to avoid closing unrelated tabs
     const useExact  = group.domain === '__landing-pages__' || !!group.label;
 
-    if (useExact) {
-      await closeTabsExact(urls);
-    } else {
-      await closeTabsByUrls(urls);
-    }
+    const closedTabs = useExact
+      ? await closeTabsExact(urls)
+      : await closeTabsByUrls(urls);
 
     if (card) {
       playCloseSound();
@@ -2094,7 +2270,10 @@ document.addEventListener('click', async (e) => {
     if (idx !== -1) domainGroups.splice(idx, 1);
 
     const groupLabel = group.domain === '__landing-pages__' ? 'Homepages' : (group.label || friendlyDomain(group.domain));
-    showToast(`Closed ${urls.length} tab${urls.length !== 1 ? 's' : ''} from ${groupLabel}`);
+    showToast(
+      `Closed ${urls.length} tab${urls.length !== 1 ? 's' : ''} from ${groupLabel}`,
+      createClosedTabsUndo(closedTabs)
+    );
 
     const statTabs = document.getElementById('statTabs');
     if (statTabs) statTabs.textContent = openTabs.length;
@@ -2107,7 +2286,7 @@ document.addEventListener('click', async (e) => {
     const urls = urlsEncoded.split(',').map(u => decodeURIComponent(u)).filter(Boolean);
     if (urls.length === 0) return;
 
-    await closeDuplicateTabs(urls, true);
+    const closedTabs = await closeDuplicateTabs(urls, true);
     playCloseSound();
 
     // Hide the dedup button
@@ -2133,7 +2312,7 @@ document.addEventListener('click', async (e) => {
       card.classList.add('has-neutral-bar');
     }
 
-    showToast('Closed duplicates, kept one copy each');
+    showToast('Closed duplicates, kept one copy each', createClosedTabsUndo(closedTabs));
     return;
   }
 
@@ -2142,7 +2321,7 @@ document.addEventListener('click', async (e) => {
     const allUrls = openTabs
       .filter(t => t.url && !t.url.startsWith('chrome') && !t.url.startsWith('about:'))
       .map(t => t.url);
-    await closeTabsByUrls(allUrls);
+    const closedTabs = await closeTabsByUrls(allUrls);
     playCloseSound();
 
     document.querySelectorAll('#openTabsMissions .mission-card').forEach(c => {
@@ -2153,7 +2332,7 @@ document.addEventListener('click', async (e) => {
       animateCardOut(c);
     });
 
-    showToast('All tabs closed. Fresh start.');
+    showToast('All tabs closed. Fresh start.', createClosedTabsUndo(closedTabs));
     return;
   }
 });
@@ -2249,6 +2428,13 @@ document.addEventListener('dragend', async () => {
   clearFavoriteDragClasses();
 
   if (shouldRestore) await renderFavoritesSection();
+});
+
+document.addEventListener('keydown', async (e) => {
+  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'z') {
+    e.preventDefault();
+    await runLastUndoAction();
+  }
 });
 
 chrome.storage.onChanged.addListener((changes, areaName) => {

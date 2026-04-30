@@ -226,6 +226,26 @@ test('local tab actions suppress automatic dashboard refresh flicker', () => {
   assert.match(appJs, /ignoreDashboardRefreshForLocalTabAction\(\);\s*await chrome\.tabs\.create/);
 });
 
+test('delete and close operations can be reverted from toast or keyboard', () => {
+  assert.match(indexHtml, /id="toastRevert"/);
+  assert.match(indexHtml, /data-action="execute-undo"/);
+  assert.match(css, /\.toast-revert/);
+  assert.match(appJs, /let lastUndoAction = null;/);
+  assert.match(appJs, /function showToast\(message, undoAction = null\)/);
+  assert.match(appJs, /function setUndoAction\(/);
+  assert.match(appJs, /async function runLastUndoAction\(\)/);
+  assert.match(appJs, /function createClosedTabsUndo\(/);
+  assert.match(appJs, /async function restoreClosedTabs\(/);
+  assert.match(appJs, /function createFavoriteDeleteUndo\(/);
+  assert.match(appJs, /function createSavedTabDeleteUndo\(/);
+  assert.match(appJs, /action === 'execute-undo'/);
+  assert.match(appJs, /e\.key\.toLowerCase\(\) === 'z'/);
+  assert.match(appJs, /e\.metaKey \|\| e\.ctrlKey/);
+  assert.match(appJs, /showToast\('Tab closed', createClosedTabsUndo/);
+  assert.match(appJs, /showToast\('Favorite deleted', createFavoriteDeleteUndo/);
+  assert.match(appJs, /showToast\('Archived tab deleted', createSavedTabDeleteUndo/);
+});
+
 test('archived saved tabs can be deleted from the archive list', () => {
   assert.match(appJs, /async function deleteSavedTab\(/);
   assert.match(appJs, /data-action="delete-archive-item"/);

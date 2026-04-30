@@ -1081,12 +1081,29 @@ header {
 .toast.visible {
   opacity: 1;
   transform: translateX(-50%) translateY(0);
+  pointer-events: auto;
 }
 
 .toast svg {
   width: 16px;
   height: 16px;
   color: var(--status-active);
+}
+
+.toast-revert {
+  border: 1px solid rgba(255,255,255,0.38);
+  background: rgba(255,255,255,0.1);
+  color: var(--paper);
+  border-radius: 4px;
+  padding: 3px 8px;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.toast-revert:hover {
+  background: rgba(255,255,255,0.18);
+  border-color: rgba(255,255,255,0.58);
 }
 
 /* ---- Footer ---- */
