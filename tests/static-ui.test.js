@@ -19,6 +19,11 @@ test('renders a top favorites section before the dashboard columns', () => {
   assert.match(indexHtml, /data-sort-mode="created"/);
   assert.match(indexHtml, /data-sort-mode="visited"/);
   assert.match(indexHtml, /data-sort-mode="custom"/);
+  assert.match(indexHtml, /id="favoriteCount"/);
+  assert.match(css, /\.section-header\s*\{[\s\S]*align-items:\s*center;/);
+  const sectionLineBlock = css.match(/\.section-line\s*\{[^}]*\}/)[0];
+  assert.match(sectionLineBlock, /align-self:\s*center;/);
+  assert.doesNotMatch(sectionLineBlock, /margin-top:\s*10px;/);
   assert.match(indexHtml, /id="favoriteForm"[^>]*style="display:none"/);
   assert.match(indexHtml, /id="favoriteName"/);
   assert.match(indexHtml, /id="favoriteUrl"/);
@@ -33,6 +38,10 @@ test('favorites are persisted, rendered, opened, and removed from chrome.storage
   assert.match(appJs, /async function renderFavoritesSection\(\)/);
   assert.match(appJs, /function deriveFavoriteTitleFromUrl\(/);
   assert.match(appJs, /function autofillFavoriteNameFromUrl\(/);
+  assert.match(appJs, /function updateFavoriteCount\(count\)/);
+  assert.match(appJs, /favoriteCount/);
+  assert.match(appJs, /count === 1 \? '1 tab' : `\$\{count\} tabs`/);
+  assert.match(appJs, /updateFavoriteCount\(favorites\.length\)/);
   assert.match(appJs, /favoriteNameWasEdited/);
   assert.match(appJs, /action === 'toggle-favorite-form'/);
   assert.match(appJs, /data-action="open-favorite"/);
@@ -111,15 +120,66 @@ test('favorite groups use dense aligned grid spans to reduce empty gaps', () => 
 });
 
 test('open tab group close control lives in the card header', () => {
-  assert.match(appJs, /const closeGroupButton = `<button class="open-tabs-badge open-tabs-close"/);
+  assert.match(appJs, /const tabCountBadge = `<span class="mission-tab-count"/);
+  assert.match(appJs, /\(\$\{tabCount\}\)/);
+  assert.match(appJs, /title="\$\{tabCount\} tab\$\{tabCount !== 1 \? 's' : ''\} open"/);
+  assert.match(appJs, /const closeGroupButton = `<button class="open-tabs-icon-button open-tabs-close"/);
   assert.match(appJs, /const closeDupesButton = hasDupes/);
-  assert.match(appJs, /class="open-tabs-badge open-tabs-close open-tabs-dedupe"/);
-  assert.match(appJs, /Close duplicate\$\{totalExtras !== 1 \? 's' : ''\}/);
-  assert.match(appJs, /\$\{tabBadge\}\s*\$\{closeGroupButton\}/);
-  assert.match(appJs, /\$\{dupeBadge\}\s*\$\{closeDupesButton\}/);
+  assert.match(appJs, /class="open-tabs-icon-button open-tabs-close open-tabs-dedupe"/);
+  assert.match(appJs, /title="Close duplicate tab\$\{totalExtras !== 1 \? 's' : ''\}"/);
+  assert.match(appJs, /aria-label="Close duplicate tab\$\{totalExtras !== 1 \? 's' : ''\}"/);
+  assert.match(appJs, /\$\{ICONS\.dedupe\}/);
+  assert.doesNotMatch(appJs, /Close duplicate\$\{totalExtras !== 1 \? 's' : ''\}/);
+  assert.doesNotMatch(appJs, />\s*Close all\s*</);
+  assert.match(appJs, /<div class="mission-title-row">/);
+  assert.match(appJs, /<div class="mission-action-buttons">/);
+  assert.match(appJs, /\$\{tabCountBadge\}\s*\$\{dupeBadge\}/);
+  assert.match(appJs, /\$\{closeDupesButton\}\s*\$\{closeGroupButton\}/);
   assert.doesNotMatch(appJs, /let actionsHtml = `\s*<button class="action-btn close-tabs"/);
   assert.doesNotMatch(appJs, /<div class="actions">/);
   assert.match(css, /\.open-tabs-close/);
+  assert.match(css, /\.mission-title-row/);
+  assert.match(css, /\.mission-tab-count/);
+  assert.match(css, /\.mission-action-buttons/);
+  assert.match(css, /\.open-tabs-icon-button/);
+  assert.match(css, /\.open-tabs-icon-button\s+svg\s*\{[\s\S]*width:\s*12px;/);
+});
+
+test('open tabs can close all duplicates from the section header', () => {
+  assert.match(appJs, /function getDuplicateUrls\(tabs = \[\]\)/);
+  assert.match(appJs, /function getDuplicateExtraCount\(duplicateUrls = \[\]\)/);
+  assert.match(appJs, /async function refreshOpenTabGroupsForUrls\(urls = \[\]\)/);
+  assert.match(appJs, /card\.outerHTML = renderDomainCard\(group, favoriteUrls, groupIndex\);/);
+  assert.match(appJs, /<span class="section-count-text">/);
+  assert.match(appJs, /\$\{domainGroups\.length\} domain\$\{domainGroups\.length !== 1 \? 's' : ''\} &middot; \$\{realTabs\.length\} tab\$\{realTabs\.length !== 1 \? 's' : ''\}/);
+  assert.match(appJs, /data-action="dedup-all-open-tabs"/);
+  assert.match(appJs, /\$\{ICONS\.dedupe\} Close all duplicate tabs/);
+  assert.match(appJs, /\$\{ICONS\.close\} Close all \$\{realTabs\.length\} tabs/);
+  assert.match(appJs, /Close all duplicate tabs/);
+  assert.match(appJs, /action === 'dedup-all-open-tabs'/);
+  assert.match(appJs, /await closeDuplicateTabs\(urls, true\)/);
+  assert.match(appJs, /await refreshOpenTabGroupsForUrls\(urls\);/);
+  const globalDedupBlock = appJs.match(/if \(action === 'dedup-all-open-tabs'\) \{[\s\S]*?return;\n  \}/)[0];
+  assert.doesNotMatch(globalDedupBlock, /renderStaticDashboard\(\)/);
+  assert.match(css, /\.section-count\s*\{[\s\S]*display:\s*flex;/);
+  assert.match(css, /\.section-count\s*\{[\s\S]*flex-wrap:\s*wrap;/);
+  assert.match(css, /\.section-count-text/);
+  assert.match(css, /\.dedupe-tabs/);
+});
+
+test('open tab duplicate controls are visually muted', () => {
+  const dedupeBlock = css.match(/(?:^|\n)\.open-tabs-dedupe\s*\{[^}]*\}/)[0];
+  assert.match(dedupeBlock, /color:\s*var\(--muted\);/);
+  assert.match(dedupeBlock, /background:\s*rgba\(154,\s*145,\s*138,\s*0\.08\);/);
+  assert.doesNotMatch(dedupeBlock, /var\(--accent-amber\)/);
+});
+
+test('all open tab cards receive initial load animation', () => {
+  assert.match(appJs, /function renderDomainCard\(group, favoriteUrls = new Set\(\), groupIndex = 0\)/);
+  assert.match(appJs, /--mission-delay:\$\{animationDelay\}s/);
+  assert.match(appJs, /domainGroups\.map\(\(g, index\) => renderDomainCard\(g, favoriteUrls, index\)\)/);
+  assert.match(css, /\.active-section \.missions \.mission-card\s*\{[\s\S]*animation:\s*fadeUp 0\.4s ease var\(--mission-delay,\s*0\.25s\) both;/);
+  assert.doesNotMatch(css, /\.active-section \.missions \.mission-card:nth-child\(4\)/);
 });
 
 test('favorite items can be edited in place through the favorite form', () => {
@@ -255,6 +315,13 @@ test('delete and close operations can be reverted from toast or keyboard', () =>
   assert.match(appJs, /showToast\('Favorite saved', createFavoriteAddUndo/);
   assert.match(appJs, /showToast\('Favorite deleted', createFavoriteDeleteUndo/);
   assert.match(appJs, /showToast\('Archived tab deleted', createSavedTabDeleteUndo/);
+});
+
+test('undo shortcut remains available after the toast hides', () => {
+  const showToastBlock = appJs.match(/function showToast\(message, undoAction = null\) \{[\s\S]*?\n\}/)[0];
+  assert.match(showToastBlock, /toast\.classList\.remove\('visible'\)/);
+  assert.match(showToastBlock, /if \(!undoAction\) clearUndoAction\(\);/);
+  assert.doesNotMatch(showToastBlock, /toast\.classList\.remove\('visible'\);\s*clearUndoAction\(\);/);
 });
 
 test('archived saved tabs can be deleted from the archive list', () => {

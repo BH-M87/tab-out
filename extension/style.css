@@ -648,6 +648,7 @@ header {
   gap: 12px;
   margin-bottom: 20px;
   margin-top: 8px;
+  min-width: 0;
 }
 
 .section-header h2 {
@@ -660,16 +661,35 @@ header {
 }
 
 .section-line {
+  min-width: 24px;
   flex: 1;
   height: 1px;
+  align-self: center;
   background: var(--warm-gray);
 }
 
 .section-count {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+  max-width: 100%;
   font-size: 12px;
   color: var(--muted);
   font-weight: 500;
   letter-spacing: 0.5px;
+}
+
+.section-count-text {
+  white-space: nowrap;
+}
+
+.section-count .action-btn {
+  flex: 0 1 auto;
+  min-height: 24px;
+  padding: 3px 10px;
   white-space: nowrap;
 }
 
@@ -745,16 +765,59 @@ header {
 .mission-top {
   display: flex;
   align-items: center;
-  gap: 10px;
-  margin-bottom: 6px;
+  justify-content: space-between;
+  gap: 8px;
   flex-wrap: wrap;
+  margin-bottom: 8px;
+  min-width: 0;
+}
+
+.mission-title-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1 1 150px;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .mission-name {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 100%;
   font-weight: 600;
   font-size: 15px;
   color: var(--ink);
   letter-spacing: -0.2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.mission-tab-count,
+.mission-dupe-count {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--muted);
+  line-height: 1;
+}
+
+.mission-dupe-count {
+  color: var(--accent-amber);
+  background: rgba(200, 113, 58, 0.08);
+  padding: 3px 6px;
+  border-radius: 3px;
+}
+
+.mission-action-buttons {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+  max-width: 100%;
 }
 
 .mission-tag {
@@ -799,12 +862,31 @@ header {
   height: 10px;
 }
 
-.open-tabs-close {
+.open-tabs-icon-button {
+  width: 28px;
+  height: 28px;
   border: none;
+  border-radius: 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+}
+
+.open-tabs-icon-button svg {
+  width: 12px;
+  height: 12px;
+}
+
+.open-tabs-close {
   cursor: pointer;
   color: var(--muted);
   background: rgba(154, 145, 138, 0.08);
   transition: color 0.15s, background 0.15s;
+}
+
+.mission-action-buttons .open-tabs-close {
+  flex-shrink: 0;
 }
 
 .open-tabs-close:hover {
@@ -813,13 +895,24 @@ header {
 }
 
 .open-tabs-dedupe {
-  color: var(--accent-amber);
-  background: rgba(200, 113, 58, 0.08);
+  color: var(--muted);
+  background: rgba(154, 145, 138, 0.08);
 }
 
 .open-tabs-dedupe:hover {
-  color: var(--status-abandoned);
-  background: rgba(179, 90, 90, 0.08);
+  color: var(--ink);
+  background: rgba(154, 145, 138, 0.14);
+}
+
+.dedupe-tabs {
+  color: var(--muted);
+  border-color: rgba(154, 145, 138, 0.24);
+  background: rgba(154, 145, 138, 0.08);
+}
+
+.dedupe-tabs:hover {
+  color: var(--ink);
+  background: rgba(154, 145, 138, 0.14);
 }
 
 .mission-summary {
@@ -1169,10 +1262,7 @@ header { animation: fadeUp 0.5s ease both; }
 .tab-cleanup-banner { animation: fadeUp 0.5s ease 0.1s both; }
 .nudge-banner { animation: fadeUp 0.5s ease 0.15s both; }
 .active-section .section-header { animation: fadeUp 0.5s ease 0.2s both; }
-.active-section .missions .mission-card:nth-child(1) { animation: fadeUp 0.4s ease 0.25s both; }
-.active-section .missions .mission-card:nth-child(2) { animation: fadeUp 0.4s ease 0.3s both; }
-.active-section .missions .mission-card:nth-child(3) { animation: fadeUp 0.4s ease 0.35s both; }
-.active-section .missions .mission-card:nth-child(4) { animation: fadeUp 0.4s ease 0.4s both; }
+.active-section .missions .mission-card { animation: fadeUp 0.4s ease var(--mission-delay, 0.25s) both; }
 .abandoned-section .section-header { animation: fadeUp 0.5s ease 0.45s both; }
 .abandoned-section .missions .mission-card:nth-child(1) { animation: fadeUp 0.4s ease 0.5s both; }
 .abandoned-section .missions .mission-card:nth-child(2) { animation: fadeUp 0.4s ease 0.55s both; }

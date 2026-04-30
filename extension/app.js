@@ -216,6 +216,62 @@ async function closeDuplicateTabs(urls, keepOne = true) {
   return tabsToClose.map(getTabSnapshot).filter(Boolean);
 }
 
+function getDuplicateUrls(tabs = []) {
+  const urlCounts = {};
+  for (const tab of tabs) {
+    if (!tab || !tab.url) continue;
+    urlCounts[tab.url] = (urlCounts[tab.url] || 0) + 1;
+  }
+  return Object.entries(urlCounts).filter(([, count]) => count > 1);
+}
+
+function getDuplicateExtraCount(duplicateUrls = []) {
+  return duplicateUrls.reduce((sum, [, count]) => sum + count - 1, 0);
+}
+
+function renderOpenTabsSectionCount() {
+  const openTabsSectionCount = document.getElementById('openTabsSectionCount');
+  if (!openTabsSectionCount) return;
+
+  const realTabs = getRealTabs();
+  const duplicateUrls = getDuplicateUrls(realTabs);
+  const duplicateExtraCount = getDuplicateExtraCount(duplicateUrls);
+  const duplicateUrlsEncoded = duplicateUrls.map(([url]) => encodeURIComponent(url)).join(',');
+  const closeAllDuplicatesButton = duplicateExtraCount > 0
+    ? `<button class="action-btn dedupe-tabs" data-action="dedup-all-open-tabs" data-dupe-urls="${duplicateUrlsEncoded}" type="button">${ICONS.dedupe} Close all duplicate tabs (${duplicateExtraCount})</button>`
+    : '';
+
+  openTabsSectionCount.innerHTML = `
+    <span class="section-count-text">${domainGroups.length} domain${domainGroups.length !== 1 ? 's' : ''} &middot; ${realTabs.length} tab${realTabs.length !== 1 ? 's' : ''}</span>
+    ${closeAllDuplicatesButton}
+    <button class="action-btn close-tabs" data-action="close-all-open-tabs" type="button">${ICONS.close} Close all ${realTabs.length} tabs</button>
+  `;
+}
+
+async function refreshOpenTabGroupsForUrls(urls = []) {
+  const targetUrls = new Set(urls);
+  if (targetUrls.size === 0) return;
+
+  const openTabIds = new Map(getRealTabs().map(tab => [tab.id, tab]));
+  const favoriteUrls = new Set((await getFavoriteSites()).map(site => site.url));
+
+  domainGroups.forEach((group, groupIndex) => {
+    if (!group.tabs.some(tab => targetUrls.has(tab.url))) return;
+
+    group.tabs = group.tabs
+      .map(tab => openTabIds.get(tab.id))
+      .filter(Boolean);
+
+    const stableId = 'domain-' + group.domain.replace(/[^a-z0-9]/g, '-');
+    const card = document.querySelector(`#openTabsMissions .mission-card[data-domain-id="${stableId}"]`);
+    if (card) card.outerHTML = renderDomainCard(group, favoriteUrls, groupIndex);
+  });
+
+  renderOpenTabsSectionCount();
+  const statTabs = document.getElementById('statTabs');
+  if (statTabs) statTabs.textContent = openTabs.length;
+}
+
 /**
  * closeTabOutDupes()
  *
@@ -481,6 +537,12 @@ function setFavoriteFormOpen(open, site = null) {
   } else {
     if (addButton) addButton.textContent = 'Add';
   }
+}
+
+function updateFavoriteCount(count) {
+  const favoriteCount = document.getElementById('favoriteCount');
+  if (!favoriteCount) return;
+  favoriteCount.textContent = count === 1 ? '1 tab' : `${count} tabs`;
 }
 
 async function saveFavoriteSite({ title, url }) {
@@ -957,7 +1019,7 @@ function showToast(message, undoAction = null) {
 
   toastTimer = setTimeout(() => {
     toast.classList.remove('visible');
-    clearUndoAction();
+    if (!undoAction) clearUndoAction();
   }, undoAction ? 5000 : 2500);
 }
 
@@ -1226,6 +1288,7 @@ function smartTitle(title, url) {
 const ICONS = {
   tabs:    `<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M3 8.25V18a2.25 2.25 0 0 0 2.25 2.25h13.5A2.25 2.25 0 0 0 21 18V8.25m-18 0V6a2.25 2.25 0 0 1 2.25-2.25h13.5A2.25 2.25 0 0 1 21 6v2.25m-18 0h18" /></svg>`,
   close:   `<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18 18 6M6 6l12 12" /></svg>`,
+  dedupe:  `<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M7 7.5h8.5A1.5 1.5 0 0 1 17 9v8.5A1.5 1.5 0 0 1 15.5 19H7a1.5 1.5 0 0 1-1.5-1.5V9A1.5 1.5 0 0 1 7 7.5Z" /><path stroke-linecap="round" stroke-linejoin="round" d="M10 4.5h7A2.5 2.5 0 0 1 19.5 7v7" /><path stroke-linecap="round" stroke-linejoin="round" d="m8.5 14 5-5m0 5-5-5" /></svg>`,
   archive: `<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M20.25 7.5l-.625 10.632a2.25 2.25 0 0 1-2.247 2.118H6.622a2.25 2.25 0 0 1-2.247-2.118L3.75 7.5m6 4.125l2.25 2.25m0 0l2.25 2.25M12 13.875l2.25-2.25M12 13.875l-2.25 2.25M3.375 7.5h17.25c.621 0 1.125-.504 1.125-1.125v-1.5c0-.621-.504-1.125-1.125-1.125H3.375c-.621 0-1.125.504-1.125 1.125v1.5c0 .621.504 1.125 1.125 1.125Z" /></svg>`,
   focus:   `<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="m4.5 19.5 15-15m0 0H8.25m11.25 0v11.25" /></svg>`,
   favorite:`<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M11.48 3.499a.562.562 0 0 1 1.04 0l2.125 5.111a.563.563 0 0 0 .475.345l5.518.442c.499.04.701.663.321.988l-4.204 3.602a.563.563 0 0 0-.182.557l1.285 5.385a.562.562 0 0 1-.84.61l-4.725-2.885a.562.562 0 0 0-.586 0L6.982 20.54a.562.562 0 0 1-.84-.61l1.285-5.386a.562.562 0 0 0-.182-.557L3.04 10.385a.562.562 0 0 1 .321-.988l5.518-.442a.563.563 0 0 0 .475-.345L11.48 3.5Z" /></svg>`,
@@ -1337,37 +1400,35 @@ function buildOverflowChips(hiddenTabs, urlCounts = {}, favoriteUrls = new Set()
  * Builds the HTML for one domain group card.
  * group = { domain: string, tabs: [{ url, title, id, windowId, active }] }
  */
-function renderDomainCard(group, favoriteUrls = new Set()) {
+function renderDomainCard(group, favoriteUrls = new Set(), groupIndex = 0) {
   const tabs      = group.tabs || [];
   const tabCount  = tabs.length;
   const isLanding = group.domain === '__landing-pages__';
   const stableId  = 'domain-' + group.domain.replace(/[^a-z0-9]/g, '-');
+  const animationDelay = Math.min(0.25 + (groupIndex * 0.03), 0.55).toFixed(2);
 
   // Count duplicates (exact URL match)
-  const urlCounts = {};
-  for (const tab of tabs) urlCounts[tab.url] = (urlCounts[tab.url] || 0) + 1;
-  const dupeUrls   = Object.entries(urlCounts).filter(([, c]) => c > 1);
+  const urlCounts = tabs.reduce((counts, tab) => {
+    if (tab.url) counts[tab.url] = (counts[tab.url] || 0) + 1;
+    return counts;
+  }, {});
+  const dupeUrls   = getDuplicateUrls(tabs);
   const hasDupes   = dupeUrls.length > 0;
-  const totalExtras = dupeUrls.reduce((s, [, c]) => s + c - 1, 0);
+  const totalExtras = getDuplicateExtraCount(dupeUrls);
 
-  const tabBadge = `<span class="open-tabs-badge">
-    ${ICONS.tabs}
-    ${tabCount} tab${tabCount !== 1 ? 's' : ''} open
-  </span>`;
-  const closeGroupButton = `<button class="open-tabs-badge open-tabs-close" data-action="close-domain-tabs" data-domain-id="${stableId}" type="button">
+  const tabCountBadge = `<span class="mission-tab-count" title="${tabCount} tab${tabCount !== 1 ? 's' : ''} open">(${tabCount})</span>`;
+  const closeGroupButton = `<button class="open-tabs-icon-button open-tabs-close" data-action="close-domain-tabs" data-domain-id="${stableId}" type="button" title="Close all tabs in this group" aria-label="Close all tabs in this group">
     ${ICONS.close}
-    Close all
   </button>`;
   const dupeUrlsEncoded = dupeUrls.map(([url]) => encodeURIComponent(url)).join(',');
   const closeDupesButton = hasDupes
-    ? `<button class="open-tabs-badge open-tabs-close open-tabs-dedupe" data-action="dedup-keep-one" data-dupe-urls="${dupeUrlsEncoded}" type="button">
-        ${ICONS.close}
-        Close duplicate${totalExtras !== 1 ? 's' : ''}
+    ? `<button class="open-tabs-icon-button open-tabs-close open-tabs-dedupe" data-action="dedup-keep-one" data-dupe-urls="${dupeUrlsEncoded}" type="button" title="Close duplicate tab${totalExtras !== 1 ? 's' : ''}" aria-label="Close duplicate tab${totalExtras !== 1 ? 's' : ''}">
+        ${ICONS.dedupe}
       </button>`
     : '';
 
   const dupeBadge = hasDupes
-    ? `<span class="open-tabs-badge" style="color:var(--accent-amber);background:rgba(200,113,58,0.08);">
+    ? `<span class="mission-dupe-count" title="${totalExtras} duplicate tab${totalExtras !== 1 ? 's' : ''}">
         ${totalExtras} duplicate${totalExtras !== 1 ? 's' : ''}
       </span>`
     : '';
@@ -1417,15 +1478,19 @@ function renderDomainCard(group, favoriteUrls = new Set()) {
   }).join('') + (extraCount > 0 ? buildOverflowChips(uniqueTabs.slice(8), urlCounts, favoriteUrls) : '');
 
   return `
-    <div class="mission-card domain-card ${hasDupes ? 'has-amber-bar' : 'has-neutral-bar'}" data-domain-id="${stableId}">
+    <div class="mission-card domain-card ${hasDupes ? 'has-amber-bar' : 'has-neutral-bar'}" data-domain-id="${stableId}" style="--mission-delay:${animationDelay}s">
       <div class="status-bar"></div>
       <div class="mission-content">
         <div class="mission-top">
-          <span class="mission-name">${isLanding ? 'Homepages' : (group.label || friendlyDomain(group.domain))}</span>
-          ${tabBadge}
-          ${closeGroupButton}
-          ${dupeBadge}
-          ${closeDupesButton}
+          <div class="mission-title-row">
+            <span class="mission-name">${isLanding ? 'Homepages' : (group.label || friendlyDomain(group.domain))}</span>
+            ${tabCountBadge}
+            ${dupeBadge}
+          </div>
+          <div class="mission-action-buttons">
+            ${closeDupesButton}
+            ${closeGroupButton}
+          </div>
         </div>
         <div class="mission-pages">${pageChips}</div>
       </div>
@@ -1448,6 +1513,7 @@ async function renderFavoritesSection() {
 
   try {
     const favorites = await getFavoriteSites();
+    updateFavoriteCount(favorites.length);
     const sortMode = await getFavoriteSortMode();
     const groupingEnabled = await getFavoriteGroupingEnabled();
     const expandedDomains = await getFavoriteExpandedDomains();
@@ -1845,14 +1911,13 @@ async function renderStaticDashboard() {
   // --- Render domain cards ---
   const openTabsSection      = document.getElementById('openTabsSection');
   const openTabsMissionsEl   = document.getElementById('openTabsMissions');
-  const openTabsSectionCount = document.getElementById('openTabsSectionCount');
   const openTabsSectionTitle = document.getElementById('openTabsSectionTitle');
   const favoriteUrls         = new Set((await getFavoriteSites()).map(site => site.url));
 
   if (domainGroups.length > 0 && openTabsSection) {
     if (openTabsSectionTitle) openTabsSectionTitle.textContent = 'Open tabs';
-    openTabsSectionCount.innerHTML = `${domainGroups.length} domain${domainGroups.length !== 1 ? 's' : ''} &nbsp;&middot;&nbsp; <button class="action-btn close-tabs" data-action="close-all-open-tabs" style="font-size:11px;padding:3px 10px;">${ICONS.close} Close all ${realTabs.length} tabs</button>`;
-    openTabsMissionsEl.innerHTML = domainGroups.map(g => renderDomainCard(g, favoriteUrls)).join('');
+    renderOpenTabsSectionCount();
+    openTabsMissionsEl.innerHTML = domainGroups.map((g, index) => renderDomainCard(g, favoriteUrls, index)).join('');
     openTabsSection.style.display = 'block';
   } else if (openTabsSection) {
     openTabsSection.style.display = 'none';
@@ -2347,31 +2412,21 @@ document.addEventListener('click', async (e) => {
 
     const closedTabs = await closeDuplicateTabs(urls, true);
     playCloseSound();
-
-    // Hide the dedup button
-    actionEl.style.transition = 'opacity 0.2s';
-    actionEl.style.opacity    = '0';
-    setTimeout(() => actionEl.remove(), 200);
-
-    // Remove dupe badges from the card
-    if (card) {
-      card.querySelectorAll('.chip-dupe-badge').forEach(b => {
-        b.style.transition = 'opacity 0.2s';
-        b.style.opacity    = '0';
-        setTimeout(() => b.remove(), 200);
-      });
-      card.querySelectorAll('.open-tabs-badge').forEach(badge => {
-        if (badge.textContent.includes('duplicate')) {
-          badge.style.transition = 'opacity 0.2s';
-          badge.style.opacity    = '0';
-          setTimeout(() => badge.remove(), 200);
-        }
-      });
-      card.classList.remove('has-amber-bar');
-      card.classList.add('has-neutral-bar');
-    }
-
+    await refreshOpenTabGroupsForUrls(urls);
     showToast('Closed duplicates, kept one copy each', createClosedTabsUndo(closedTabs));
+    return;
+  }
+
+  // ---- Close all duplicates across Open Tabs, keep one copy of each URL ----
+  if (action === 'dedup-all-open-tabs') {
+    const urlsEncoded = actionEl.dataset.dupeUrls || '';
+    const urls = urlsEncoded.split(',').map(u => decodeURIComponent(u)).filter(Boolean);
+    if (urls.length === 0) return;
+
+    const closedTabs = await closeDuplicateTabs(urls, true);
+    playCloseSound();
+    await refreshOpenTabGroupsForUrls(urls);
+    showToast('Closed all duplicate tabs', createClosedTabsUndo(closedTabs));
     return;
   }
 
