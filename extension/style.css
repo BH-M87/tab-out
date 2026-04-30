@@ -1541,39 +1541,9 @@ body.deferred-collapsed .deferred-column {
   overflow: hidden;
 }
 
-/* Small collapse button at the LEFT of the Saved for Later section header.
-   Lives inside the section header so it scrolls naturally with the sidebar
-   and is far from the "Close all tabs" button on the opposite side. */
-.deferred-collapse-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 20px;
-  height: 20px;
-  padding: 0;
-  background: transparent;
-  color: var(--muted);
-  border: none;
-  border-radius: 4px;
-  cursor: pointer;
-  opacity: 0.5;
-  transition: opacity 0.15s, color 0.15s, background 0.15s;
-  flex-shrink: 0;
-}
-
-.deferred-collapse-btn svg {
-  width: 12px;
-  height: 12px;
-}
-
-.deferred-collapse-btn:hover {
-  opacity: 1;
-  color: var(--ink);
-  background: rgba(154, 145, 138, 0.12);
-}
-
-/* Inline reopen button — sits at the right end of the Open Tabs section header.
-   Hidden by default; only shown when the sidebar is collapsed and has content. */
+/* Single toggle for the Saved for Later sidebar. Lives at the right end of
+   the Open Tabs section header so its position never changes between states —
+   only the chevron direction flips. */
 .deferred-reopen-inline {
   display: none;
   align-items: center;
@@ -1591,7 +1561,7 @@ body.deferred-collapsed .deferred-column {
   transition: color 0.15s, background 0.15s, border-color 0.15s;
 }
 
-.deferred-reopen-inline svg {
+.deferred-reopen-icon {
   width: 12px;
   height: 12px;
 }
@@ -1602,9 +1572,14 @@ body.deferred-collapsed .deferred-column {
   border-color: rgba(154, 145, 138, 0.4);
 }
 
-body.deferred-collapsed.deferred-has-content .deferred-reopen-inline {
+body.deferred-has-content .deferred-reopen-inline {
   display: inline-flex;
 }
+
+/* Icon swap: expanded → ">" (collapse), collapsed → "<" (expand). */
+.deferred-reopen-icon-expand { display: none; }
+body.deferred-collapsed .deferred-reopen-icon-collapse { display: none; }
+body.deferred-collapsed .deferred-reopen-icon-expand { display: inline; }
 
 /* On narrow screens, stack vertically and disable the slide-out behavior. */
 @media (max-width: 800px) {
@@ -1623,7 +1598,7 @@ body.deferred-collapsed.deferred-has-content .deferred-reopen-inline {
     pointer-events: auto;
     overflow-y: auto;
   }
-  body.deferred-collapsed.deferred-has-content .deferred-reopen-inline {
+  body.deferred-has-content .deferred-reopen-inline {
     display: none;
   }
 }
