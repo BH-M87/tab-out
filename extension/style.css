@@ -360,18 +360,31 @@ header {
   text-align: left;
 }
 
+.favorite-group-title-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
 .favorite-group-title {
   font-size: 12px;
   font-weight: 700;
   color: var(--ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
 }
 
 .favorite-group-count {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
   font-size: 10px;
   font-weight: 600;
   color: var(--muted);
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
+  line-height: 1;
 }
 
 .favorite-group-state {
@@ -538,7 +551,8 @@ header {
 
 .favorite-edit,
 .favorite-delete,
-.archive-delete {
+.archive-delete,
+.archive-restore {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -568,7 +582,8 @@ header {
 
 .favorite-edit svg,
 .favorite-delete svg,
-.archive-delete svg {
+.archive-delete svg,
+.archive-restore svg {
   width: 14px;
   height: 14px;
 }
@@ -584,6 +599,12 @@ header {
   opacity: 1;
   color: var(--status-abandoned);
   background: rgba(179, 90, 90, 0.08);
+}
+
+.archive-restore:hover {
+  opacity: 1;
+  color: var(--accent-sage);
+  background: rgba(90, 122, 98, 0.08);
 }
 
 .favorite-item.removing {
@@ -1610,8 +1631,8 @@ footer { animation: fadeUp 0.5s ease 0.65s both; }
   opacity: 0.5;
 }
 
-/* Dismiss (X) button */
-.deferred-dismiss {
+/* Delete (trash) button */
+.deferred-delete {
   background: none;
   border: none;
   color: var(--muted);
@@ -1623,12 +1644,12 @@ footer { animation: fadeUp 0.5s ease 0.65s both; }
   margin-top: 1px;
 }
 
-.deferred-dismiss svg {
+.deferred-delete svg {
   width: 14px;
   height: 14px;
 }
 
-.deferred-dismiss:hover {
+.deferred-delete:hover {
   opacity: 1;
   color: var(--status-abandoned);
 }
@@ -1756,7 +1777,8 @@ footer { animation: fadeUp 0.5s ease 0.65s both; }
   flex-shrink: 0;
 }
 
-.archive-delete {
+.archive-delete,
+.archive-restore {
   width: 24px;
   height: 24px;
   margin-left: -2px;

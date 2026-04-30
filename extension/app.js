@@ -386,15 +386,17 @@ async function checkOffSavedTab(id) {
 }
 
 /**
- * dismissSavedTab(id)
+ * restoreArchivedTab(id)
  *
- * Marks a saved tab as dismissed (removed from all lists).
+ * Moves an archived (completed) tab back to the active "Saved for Later" list
+ * by clearing the completed flag.
  */
-async function dismissSavedTab(id) {
+async function restoreArchivedTab(id) {
   const { deferred = [] } = await chrome.storage.local.get('deferred');
   const tab = deferred.find(t => t.id === id);
   if (tab) {
-    tab.dismissed = true;
+    tab.completed = false;
+    delete tab.completedAt;
     await chrome.storage.local.set({ deferred });
   }
 }
@@ -1301,6 +1303,7 @@ const ICONS = {
   bookmark:`<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M17.593 3.322c1.1.128 1.907 1.077 1.907 2.185V21L12 17.25 4.5 21V5.507c0-1.108.806-2.057 1.907-2.185a48.507 48.507 0 0 1 11.186 0Z" /></svg>`,
   edit:    `<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="m16.862 4.487 1.687-1.688a1.875 1.875 0 1 1 2.652 2.652L10.582 16.07a4.5 4.5 0 0 1-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 0 1 1.13-1.897l8.932-8.931Z" /></svg>`,
   trash:   `<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="m14.74 9-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673A2.25 2.25 0 0 1 15.916 21H8.084a2.25 2.25 0 0 1-2.244-1.327L4.772 5.79m14.456 0a48.108 48.108 0 0 0-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 0 1 3.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 0 0-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 0 0-7.5 0" /></svg>`,
+  restore: `<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M9 15 3 9m0 0 6-6M3 9h12a6 6 0 0 1 0 12h-3" /></svg>`,
 };
 
 
@@ -1598,9 +1601,9 @@ function renderFavoriteGroupCard(group, expanded) {
   return `
     <section class="favorite-group favorite-group-card favorite-group-span-${spanSize}${expandedClass}" data-favorite-domain="${safeDomain}">
       <button class="favorite-group-header" data-action="toggle-favorite-group" data-favorite-domain="${safeDomain}" type="button" aria-expanded="${expanded}">
-        <div>
-          <div class="favorite-group-title">${label}</div>
-          <div class="favorite-group-count">${count} site${count !== 1 ? 's' : ''}</div>
+        <div class="favorite-group-title-row">
+          <span class="favorite-group-title">${label}</span>
+          <span class="favorite-group-count" title="${count} site${count !== 1 ? 's' : ''}">(${count})</span>
         </div>
         ${stateLabel ? `<span class="favorite-group-state">${stateLabel}</span>` : ''}
       </button>
@@ -1744,8 +1747,8 @@ function renderDeferredItem(item) {
           <span>${ago}</span>
         </div>
       </div>
-      <button class="deferred-dismiss" data-action="dismiss-deferred" data-deferred-id="${item.id}" title="Dismiss">
-        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18 18 6M6 6l12 12" /></svg>
+      <button class="deferred-delete" data-action="delete-deferred" data-deferred-id="${item.id}" title="Delete" aria-label="Delete saved tab">
+        ${ICONS.trash}
       </button>
     </div>`;
 }
@@ -1766,7 +1769,10 @@ function renderArchiveItem(item) {
         ${safeTitle}
       </a>
       <span class="archive-item-date">${ago}</span>
-      <button class="archive-delete" data-action="delete-archive-item" data-deferred-id="${safeId}" title="Delete archived tab">
+      <button class="archive-restore" data-action="restore-archive-item" data-deferred-id="${safeId}" title="Move back to Saved for Later" aria-label="Restore to Saved for Later">
+        ${ICONS.restore}
+      </button>
+      <button class="archive-delete" data-action="delete-archive-item" data-deferred-id="${safeId}" title="Delete archived tab" aria-label="Delete archived tab">
         ${ICONS.trash}
       </button>
     </div>`;
@@ -2333,13 +2339,13 @@ document.addEventListener('click', async (e) => {
     return;
   }
 
-  // ---- Dismiss a saved tab (removes it entirely) ----
-  if (action === 'dismiss-deferred') {
+  // ---- Delete a saved tab permanently from Saved for Later ----
+  if (action === 'delete-deferred') {
     const id = actionEl.dataset.deferredId;
     if (!id) return;
 
     const undoSnapshot = await getSavedTabDeleteSnapshot(id);
-    await dismissSavedTab(id);
+    await deleteSavedTab(id);
 
     const item = actionEl.closest('.deferred-item');
     if (item) {
@@ -2349,7 +2355,27 @@ document.addEventListener('click', async (e) => {
         renderDeferredColumn();
       }, 300);
     }
-    showToast('Saved tab dismissed', createSavedTabDeleteUndo(undoSnapshot, { dismissed: false }));
+    showToast('Saved tab deleted', createSavedTabDeleteUndo(undoSnapshot));
+    return;
+  }
+
+  // ---- Restore an archived tab back to Saved for Later ----
+  if (action === 'restore-archive-item') {
+    const id = actionEl.dataset.deferredId;
+    if (!id) return;
+
+    await restoreArchivedTab(id);
+    const item = actionEl.closest('.archive-item');
+    if (item) {
+      item.classList.add('removing');
+      setTimeout(() => renderDeferredColumn(), 180);
+    } else {
+      await renderDeferredColumn();
+    }
+    showToast('Moved back to Saved for Later', {
+      message: 'Re-archived',
+      run: () => checkOffSavedTab(id).then(() => renderDeferredColumn()),
+    });
     return;
   }
 
