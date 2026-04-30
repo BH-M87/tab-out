@@ -32,7 +32,9 @@ let dashboardRefreshTimer = null;
 let dashboardRefreshInFlight = false;
 let dashboardRefreshQueued = false;
 let dashboardTabListenersRegistered = false;
+let dashboardRefreshIgnoreUntil = 0;
 const dashboardRefreshDelayMs = 150;
+const localTabActionRefreshIgnoreMs = 800;
 const favoriteGroupPreviewLimit = 3;
 const favoriteSortModes = ['custom', 'alphabet', 'created', 'visited'];
 
@@ -100,7 +102,10 @@ async function closeTabsByUrls(urls) {
     })
     .map(tab => tab.id);
 
-  if (toClose.length > 0) await chrome.tabs.remove(toClose);
+  if (toClose.length > 0) {
+    ignoreDashboardRefreshForLocalTabAction();
+    await chrome.tabs.remove(toClose);
+  }
   await fetchOpenTabs();
 }
 
@@ -115,7 +120,10 @@ async function closeTabsExact(urls) {
   const urlSet = new Set(urls);
   const allTabs = await chrome.tabs.query({});
   const toClose = allTabs.filter(t => urlSet.has(t.url)).map(t => t.id);
-  if (toClose.length > 0) await chrome.tabs.remove(toClose);
+  if (toClose.length > 0) {
+    ignoreDashboardRefreshForLocalTabAction();
+    await chrome.tabs.remove(toClose);
+  }
   await fetchOpenTabs();
 }
 
@@ -148,6 +156,7 @@ async function focusTab(url) {
 
   // Prefer a match in a different window so it actually switches windows
   const match = matches.find(t => t.windowId !== currentWindow.id) || matches[0];
+  ignoreDashboardRefreshForLocalTabAction();
   await chrome.tabs.update(match.id, { active: true });
   await chrome.windows.update(match.windowId, { focused: true });
   return true;
@@ -176,7 +185,10 @@ async function closeDuplicateTabs(urls, keepOne = true) {
     }
   }
 
-  if (toClose.length > 0) await chrome.tabs.remove(toClose);
+  if (toClose.length > 0) {
+    ignoreDashboardRefreshForLocalTabAction();
+    await chrome.tabs.remove(toClose);
+  }
   await fetchOpenTabs();
 }
 
@@ -204,7 +216,10 @@ async function closeTabOutDupes() {
     tabOutTabs.find(t => t.active) ||
     tabOutTabs[0];
   const toClose = tabOutTabs.filter(t => t.id !== keep.id).map(t => t.id);
-  if (toClose.length > 0) await chrome.tabs.remove(toClose);
+  if (toClose.length > 0) {
+    ignoreDashboardRefreshForLocalTabAction();
+    await chrome.tabs.remove(toClose);
+  }
   await fetchOpenTabs();
 }
 
@@ -1664,7 +1679,18 @@ async function renderDashboard() {
   await renderStaticDashboard();
 }
 
+function ignoreDashboardRefreshForLocalTabAction() {
+  dashboardRefreshIgnoreUntil = Date.now() + localTabActionRefreshIgnoreMs;
+  clearTimeout(dashboardRefreshTimer);
+  dashboardRefreshTimer = null;
+}
+
+function shouldIgnoreDashboardRefresh() {
+  return Date.now() < dashboardRefreshIgnoreUntil;
+}
+
 function scheduleDashboardRefresh() {
+  if (shouldIgnoreDashboardRefresh()) return;
   clearTimeout(dashboardRefreshTimer);
   dashboardRefreshTimer = setTimeout(refreshDashboardFromTabEvents, dashboardRefreshDelayMs);
 }
@@ -1801,7 +1827,10 @@ document.addEventListener('click', async (e) => {
     if (id) await markFavoriteVisited(id);
     if (url) {
       const didFocus = await focusTab(url);
-      if (!didFocus) await chrome.tabs.create({ url });
+      if (!didFocus) {
+        ignoreDashboardRefreshForLocalTabAction();
+        await chrome.tabs.create({ url });
+      }
     }
     return;
   }
@@ -1903,7 +1932,10 @@ document.addEventListener('click', async (e) => {
     // Close the tab in Chrome directly
     const allTabs = await chrome.tabs.query({});
     const match   = allTabs.find(t => t.url === tabUrl);
-    if (match) await chrome.tabs.remove(match.id);
+    if (match) {
+      ignoreDashboardRefreshForLocalTabAction();
+      await chrome.tabs.remove(match.id);
+    }
     await fetchOpenTabs();
 
     playCloseSound();
@@ -1956,7 +1988,10 @@ document.addEventListener('click', async (e) => {
     // Close the tab in Chrome
     const allTabs = await chrome.tabs.query({});
     const match   = allTabs.find(t => t.url === tabUrl);
-    if (match) await chrome.tabs.remove(match.id);
+    if (match) {
+      ignoreDashboardRefreshForLocalTabAction();
+      await chrome.tabs.remove(match.id);
+    }
     await fetchOpenTabs();
 
     // Animate chip out

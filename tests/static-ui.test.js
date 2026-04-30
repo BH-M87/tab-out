@@ -151,7 +151,7 @@ test('opening a favorite focuses an existing tab before creating a new one', () 
   assert.match(appJs, /return true;/);
   assert.match(appJs, /return false;/);
   assert.match(appJs, /const didFocus = await focusTab\(url\);/);
-  assert.match(appJs, /if \(!didFocus\) await chrome\.tabs\.create\(\{ url \}\);/);
+  assert.match(appJs, /if \(!didFocus\) \{[\s\S]*await chrome\.tabs\.create\(\{ url \}\);[\s\S]*\}/);
 });
 
 test('open tab rows can be added directly to favorites', () => {
@@ -197,9 +197,13 @@ test('dashboard refreshes favorites when toolbar click updates storage', () => {
 
 test('dashboard auto-refreshes open tabs from Chrome tab events', () => {
   assert.match(appJs, /const dashboardRefreshDelayMs = 150;/);
+  assert.match(appJs, /const localTabActionRefreshIgnoreMs = 800;/);
   assert.match(appJs, /function scheduleDashboardRefresh\(\)/);
+  assert.match(appJs, /function ignoreDashboardRefreshForLocalTabAction\(\)/);
+  assert.match(appJs, /function shouldIgnoreDashboardRefresh\(\)/);
   assert.match(appJs, /async function refreshDashboardFromTabEvents\(\)/);
   assert.match(appJs, /function registerDashboardTabListeners\(\)/);
+  assert.match(appJs, /if \(shouldIgnoreDashboardRefresh\(\)\) return;/);
   assert.match(appJs, /chrome\.tabs\.onCreated\.addListener\(scheduleDashboardRefresh\)/);
   assert.match(appJs, /chrome\.tabs\.onRemoved\.addListener\(scheduleDashboardRefresh\)/);
   assert.match(appJs, /chrome\.tabs\.onMoved\.addListener\(scheduleDashboardRefresh\)/);
@@ -212,6 +216,14 @@ test('dashboard auto-refreshes open tabs from Chrome tab events', () => {
   assert.match(appJs, /clearTimeout\(dashboardRefreshTimer\)/);
   assert.match(appJs, /setTimeout\(refreshDashboardFromTabEvents, dashboardRefreshDelayMs\)/);
   assert.match(appJs, /window\.addEventListener\('beforeunload', unregisterDashboardTabListeners\)/);
+});
+
+test('local tab actions suppress automatic dashboard refresh flicker', () => {
+  const ignoreCalls = appJs.match(/ignoreDashboardRefreshForLocalTabAction\(\);/g) || [];
+  assert.ok(ignoreCalls.length >= 7);
+  assert.match(appJs, /ignoreDashboardRefreshForLocalTabAction\(\);\s*await chrome\.tabs\.remove/);
+  assert.match(appJs, /ignoreDashboardRefreshForLocalTabAction\(\);\s*await chrome\.tabs\.update/);
+  assert.match(appJs, /ignoreDashboardRefreshForLocalTabAction\(\);\s*await chrome\.tabs\.create/);
 });
 
 test('archived saved tabs can be deleted from the archive list', () => {
