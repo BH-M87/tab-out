@@ -14,19 +14,24 @@ Before doing anything technical, tell the user what they're about to get:
 > - **See all your open tabs at a glance** grouped by domain on a grid
 > - **Homepages group** pulls Gmail, X, LinkedIn, YouTube, GitHub homepages into one card for easy cleanup
 > - **Close tabs with style** satisfying swoosh sound + confetti burst
-> - **Duplicate detection** flags when you have the same page open twice
+> - **Duplicate detection** flags when you have the same page open twice, with one-click cleanup
 > - **Click any tab title to jump to it** even across different Chrome windows
 > - **Save for later** bookmark individual tabs to a checklist before closing them
+> - **Favorites** pin frequent sites, sort or group them by domain, drag to reorder, or one-click favorite from the toolbar icon
+> - **Undo** ⌘Z / Ctrl+Z within 5 seconds (or tap Revert on the toast) to undo any close or delete
+> - **Live auto-refresh** the dashboard reacts to tab events instantly, no manual refresh needed
 > - **100% local** no server, no accounts, no data sent anywhere
 >
 > It's just a Chrome extension. Setup takes about 1 minute.
+>
+> *(This is a fork of [zarazhangrui/tab-out](https://github.com/zarazhangrui/tab-out), optimized and extended by [BH-M87](https://github.com/BH-M87) — see CHANGELOG.md for details.)*
 
 ---
 
 ## Step 1 -- Clone the repo
 
 ```bash
-git clone https://github.com/zarazhangrui/tab-out.git
+git clone https://github.com/BH-M87/tab-out.git
 cd tab-out
 ```
 
@@ -83,6 +88,9 @@ Once the extension is loaded:
 > 5. **Click "Close all N tabs"** on a group to close the whole thing.
 > 6. **Duplicate tabs** are flagged with an amber "(2x)" badge. Click "Close duplicates" to keep one copy.
 > 7. **Save a tab for later** by clicking the bookmark icon before closing it. Saved tabs appear in the sidebar.
+> 8. **Star a tab** to add it to **Favorites** at the top of the dashboard, or click the toolbar icon to favorite the current page in one click. Favorites can be sorted, grouped by domain, and dragged to reorder.
+> 9. **Closed something by accident?** Press `⌘Z` (Mac) or `Ctrl+Z` (Windows/Linux) within 5 seconds, or tap **Revert** on the toast. Works for closed tabs, deleted favorites, and dismissed saved tabs.
+> 10. **The dashboard updates automatically** as you open and close tabs in any window — no need to refresh.
 >
 > That's it! No server to run, no config files. Everything works right away.
 
