@@ -79,9 +79,11 @@ async function fetchOpenTabs() {
         isTabOut: url === newtabUrl || url === 'chrome://newtab/',
       };
     });
+    updateOpenTabStatCount();
   } catch {
     // chrome.tabs API unavailable (shouldn't happen in an extension page)
     openTabs = [];
+    updateOpenTabStatCount();
   }
 }
 
@@ -229,6 +231,11 @@ function getDuplicateExtraCount(duplicateUrls = []) {
   return duplicateUrls.reduce((sum, [, count]) => sum + count - 1, 0);
 }
 
+function updateOpenTabStatCount() {
+  const statTabs = document.getElementById('statTabs');
+  if (statTabs) statTabs.textContent = getRealTabs().length;
+}
+
 function renderOpenTabsSectionCount() {
   const openTabsSectionCount = document.getElementById('openTabsSectionCount');
   if (!openTabsSectionCount) return;
@@ -268,8 +275,7 @@ async function refreshOpenTabGroupsForUrls(urls = []) {
   });
 
   renderOpenTabsSectionCount();
-  const statTabs = document.getElementById('statTabs');
-  if (statTabs) statTabs.textContent = openTabs.length;
+  updateOpenTabStatCount();
 }
 
 /**
@@ -1924,8 +1930,7 @@ async function renderStaticDashboard() {
   }
 
   // --- Footer stats ---
-  const statTabs = document.getElementById('statTabs');
-  if (statTabs) statTabs.textContent = openTabs.length;
+  updateOpenTabStatCount();
 
   // --- Check for duplicate Tab Out tabs ---
   checkTabOutDupes();
@@ -2258,8 +2263,7 @@ document.addEventListener('click', async (e) => {
     }
 
     // Update footer
-    const statTabs = document.getElementById('statTabs');
-    if (statTabs) statTabs.textContent = openTabs.length;
+    updateOpenTabStatCount();
 
     showToast('Tab closed', createClosedTabsUndo(closedTabs));
     return;
@@ -2399,8 +2403,7 @@ document.addEventListener('click', async (e) => {
       createClosedTabsUndo(closedTabs)
     );
 
-    const statTabs = document.getElementById('statTabs');
-    if (statTabs) statTabs.textContent = openTabs.length;
+    updateOpenTabStatCount();
     return;
   }
 

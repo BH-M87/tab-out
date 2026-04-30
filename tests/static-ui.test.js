@@ -281,6 +281,10 @@ test('dashboard auto-refreshes open tabs from Chrome tab events', () => {
   assert.match(appJs, /changeInfo\.status === 'complete'/);
   assert.doesNotMatch(appJs, /changeInfo\.url \|\|/);
   assert.doesNotMatch(appJs, /changeInfo\.title \|\|/);
+  assert.match(appJs, /function updateOpenTabStatCount\(\)/);
+  assert.match(appJs, /statTabs\.textContent = getRealTabs\(\)\.length;/);
+  const fetchOpenTabsBlock = appJs.match(/async function fetchOpenTabs\(\) \{[\s\S]*?\n\}/)[0];
+  assert.match(fetchOpenTabsBlock, /updateOpenTabStatCount\(\);/);
   assert.match(appJs, /clearTimeout\(dashboardRefreshTimer\)/);
   assert.match(appJs, /setTimeout\(refreshDashboardFromTabEvents, dashboardRefreshDelayMs\)/);
   assert.match(appJs, /window\.addEventListener\('beforeunload', unregisterDashboardTabListeners\)/);
