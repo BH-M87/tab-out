@@ -206,6 +206,9 @@ test('dashboard auto-refreshes open tabs from Chrome tab events', () => {
   assert.match(appJs, /chrome\.tabs\.onUpdated\.addListener\(handleTabUpdatedForRefresh\)/);
   assert.match(appJs, /chrome\.tabs\.onActivated\.addListener\(scheduleDashboardRefresh\)/);
   assert.match(appJs, /chrome\.windows\.onFocusChanged\.addListener\(scheduleDashboardRefresh\)/);
+  assert.match(appJs, /changeInfo\.status === 'complete'/);
+  assert.doesNotMatch(appJs, /changeInfo\.url \|\|/);
+  assert.doesNotMatch(appJs, /changeInfo\.title \|\|/);
   assert.match(appJs, /clearTimeout\(dashboardRefreshTimer\)/);
   assert.match(appJs, /setTimeout\(refreshDashboardFromTabEvents, dashboardRefreshDelayMs\)/);
   assert.match(appJs, /window\.addEventListener\('beforeunload', unregisterDashboardTabListeners\)/);

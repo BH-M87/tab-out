@@ -1670,12 +1670,7 @@ function scheduleDashboardRefresh() {
 }
 
 function handleTabUpdatedForRefresh(_tabId, changeInfo = {}) {
-  if (
-    changeInfo.url ||
-    changeInfo.title ||
-    changeInfo.status === 'complete' ||
-    Object.prototype.hasOwnProperty.call(changeInfo, 'pinned')
-  ) {
+  if (changeInfo.status === 'complete') {
     scheduleDashboardRefresh();
   }
 }
