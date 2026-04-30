@@ -195,6 +195,22 @@ test('dashboard refreshes favorites when toolbar click updates storage', () => {
   assert.match(appJs, /syncOpenTabFavoriteButtons\(/);
 });
 
+test('dashboard auto-refreshes open tabs from Chrome tab events', () => {
+  assert.match(appJs, /const dashboardRefreshDelayMs = 150;/);
+  assert.match(appJs, /function scheduleDashboardRefresh\(\)/);
+  assert.match(appJs, /async function refreshDashboardFromTabEvents\(\)/);
+  assert.match(appJs, /function registerDashboardTabListeners\(\)/);
+  assert.match(appJs, /chrome\.tabs\.onCreated\.addListener\(scheduleDashboardRefresh\)/);
+  assert.match(appJs, /chrome\.tabs\.onRemoved\.addListener\(scheduleDashboardRefresh\)/);
+  assert.match(appJs, /chrome\.tabs\.onMoved\.addListener\(scheduleDashboardRefresh\)/);
+  assert.match(appJs, /chrome\.tabs\.onUpdated\.addListener\(handleTabUpdatedForRefresh\)/);
+  assert.match(appJs, /chrome\.tabs\.onActivated\.addListener\(scheduleDashboardRefresh\)/);
+  assert.match(appJs, /chrome\.windows\.onFocusChanged\.addListener\(scheduleDashboardRefresh\)/);
+  assert.match(appJs, /clearTimeout\(dashboardRefreshTimer\)/);
+  assert.match(appJs, /setTimeout\(refreshDashboardFromTabEvents, dashboardRefreshDelayMs\)/);
+  assert.match(appJs, /window\.addEventListener\('beforeunload', unregisterDashboardTabListeners\)/);
+});
+
 test('archived saved tabs can be deleted from the archive list', () => {
   assert.match(appJs, /async function deleteSavedTab\(/);
   assert.match(appJs, /data-action="delete-archive-item"/);

@@ -28,6 +28,11 @@ let openTabs = [];
 let favoriteNameWasEdited = false;
 let favoriteEditingId = null;
 let favoriteDragState = null;
+let dashboardRefreshTimer = null;
+let dashboardRefreshInFlight = false;
+let dashboardRefreshQueued = false;
+let dashboardTabListenersRegistered = false;
+const dashboardRefreshDelayMs = 150;
 const favoriteGroupPreviewLimit = 3;
 const favoriteSortModes = ['custom', 'alphabet', 'created', 'visited'];
 
@@ -1659,6 +1664,92 @@ async function renderDashboard() {
   await renderStaticDashboard();
 }
 
+function scheduleDashboardRefresh() {
+  clearTimeout(dashboardRefreshTimer);
+  dashboardRefreshTimer = setTimeout(refreshDashboardFromTabEvents, dashboardRefreshDelayMs);
+}
+
+function handleTabUpdatedForRefresh(_tabId, changeInfo = {}) {
+  if (
+    changeInfo.url ||
+    changeInfo.title ||
+    changeInfo.status === 'complete' ||
+    Object.prototype.hasOwnProperty.call(changeInfo, 'pinned')
+  ) {
+    scheduleDashboardRefresh();
+  }
+}
+
+async function refreshDashboardFromTabEvents() {
+  clearTimeout(dashboardRefreshTimer);
+  dashboardRefreshTimer = null;
+
+  if (dashboardRefreshInFlight) {
+    dashboardRefreshQueued = true;
+    return;
+  }
+
+  dashboardRefreshInFlight = true;
+  try {
+    await renderStaticDashboard();
+  } catch (err) {
+    console.warn('[tab-out] Failed to refresh dashboard after tab change:', err);
+  } finally {
+    dashboardRefreshInFlight = false;
+    if (dashboardRefreshQueued) {
+      dashboardRefreshQueued = false;
+      scheduleDashboardRefresh();
+    }
+  }
+}
+
+function registerDashboardTabListeners() {
+  if (
+    dashboardTabListenersRegistered ||
+    typeof chrome === 'undefined' ||
+    !chrome.tabs
+  ) {
+    return;
+  }
+
+  chrome.tabs.onCreated.addListener(scheduleDashboardRefresh);
+  chrome.tabs.onRemoved.addListener(scheduleDashboardRefresh);
+  chrome.tabs.onMoved.addListener(scheduleDashboardRefresh);
+  chrome.tabs.onUpdated.addListener(handleTabUpdatedForRefresh);
+  chrome.tabs.onActivated.addListener(scheduleDashboardRefresh);
+
+  if (chrome.windows && chrome.windows.onFocusChanged) {
+    chrome.windows.onFocusChanged.addListener(scheduleDashboardRefresh);
+  }
+
+  window.addEventListener('beforeunload', unregisterDashboardTabListeners);
+  dashboardTabListenersRegistered = true;
+}
+
+function unregisterDashboardTabListeners() {
+  if (
+    !dashboardTabListenersRegistered ||
+    typeof chrome === 'undefined' ||
+    !chrome.tabs
+  ) {
+    return;
+  }
+
+  clearTimeout(dashboardRefreshTimer);
+  chrome.tabs.onCreated.removeListener(scheduleDashboardRefresh);
+  chrome.tabs.onRemoved.removeListener(scheduleDashboardRefresh);
+  chrome.tabs.onMoved.removeListener(scheduleDashboardRefresh);
+  chrome.tabs.onUpdated.removeListener(handleTabUpdatedForRefresh);
+  chrome.tabs.onActivated.removeListener(scheduleDashboardRefresh);
+
+  if (chrome.windows && chrome.windows.onFocusChanged) {
+    chrome.windows.onFocusChanged.removeListener(scheduleDashboardRefresh);
+  }
+
+  window.removeEventListener('beforeunload', unregisterDashboardTabListeners);
+  dashboardTabListenersRegistered = false;
+}
+
 
 /* ----------------------------------------------------------------
    EVENT HANDLERS — using event delegation
@@ -2223,4 +2314,5 @@ document.addEventListener('input', async (e) => {
 /* ----------------------------------------------------------------
    INITIALIZE
    ---------------------------------------------------------------- */
+registerDashboardTabListeners();
 renderDashboard();
