@@ -35,6 +35,8 @@ let dashboardTabListenersRegistered = false;
 let dashboardRefreshIgnoreUntil = 0;
 let lastUndoAction = null;
 let toastTimer = null;
+let locallyManagedTabIds = new Set();
+let locallyManagedTabSnapshots = new Map();
 const dashboardRefreshDelayMs = 150;
 const localTabActionRefreshIgnoreMs = 800;
 const favoriteGroupPreviewLimit = 3;
@@ -64,15 +66,19 @@ async function fetchOpenTabs() {
     const newtabUrl = `chrome-extension://${extensionId}/index.html`;
 
     const tabs = await chrome.tabs.query({});
-    openTabs = tabs.map(t => ({
-      id:       t.id,
-      url:      t.url,
-      title:    t.title,
-      windowId: t.windowId,
-      active:   t.active,
-      // Flag Tab Out's own pages so we can detect duplicate new tabs
-      isTabOut: t.url === newtabUrl || t.url === 'chrome://newtab/',
-    }));
+    openTabs = tabs.map(t => {
+      const managedTabSnapshot = locallyManagedTabSnapshots.get(t.id);
+      const url = t.url || t.pendingUrl || managedTabSnapshot?.url || '';
+      return {
+        id:       t.id,
+        url,
+        title:    t.title || managedTabSnapshot?.title || url,
+        windowId: t.windowId,
+        active:   t.active,
+        // Flag Tab Out's own pages so we can detect duplicate new tabs
+        isTabOut: url === newtabUrl || url === 'chrome://newtab/',
+      };
+    });
   } catch {
     // chrome.tabs API unavailable (shouldn't happen in an extension page)
     openTabs = [];
@@ -484,24 +490,32 @@ async function saveFavoriteSite({ title, url }) {
   const { favorites = [] } = await chrome.storage.local.get('favorites');
   const normalizedFavorites = favorites.map(ensureFavoriteMetadata);
   const existing = normalizedFavorites.find(site => site.url === normalizedUrl);
+  const existingIndex = normalizedFavorites.findIndex(site => site.url === normalizedUrl);
   const now = new Date().toISOString();
+  let savedSite = existing;
 
   if (existing) {
     existing.title = displayTitle;
     existing.domain = getFavoriteDomain(normalizedUrl);
     existing.updatedAt = now;
   } else {
-    normalizedFavorites.unshift({
+    savedSite = {
       id: Date.now().toString(),
       title: displayTitle,
       url: normalizedUrl,
       domain: getFavoriteDomain(normalizedUrl),
       createdAt: now,
       lastVisitedAt: now,
-    });
+    };
+    normalizedFavorites.unshift(savedSite);
   }
 
   await chrome.storage.local.set({ favorites: normalizedFavorites });
+  return {
+    item: savedSite,
+    index: existing ? existingIndex : 0,
+    wasExisting: !!existing,
+  };
 }
 
 async function updateFavoriteSite(id, { title, url }) {
@@ -804,12 +818,14 @@ async function restoreClosedTabs(tabs = []) {
 
     try {
       ignoreDashboardRefreshForLocalTabAction();
-      await chrome.tabs.create(createProps);
+      const createdTab = await chrome.tabs.create(createProps);
+      markLocalTabAction(createdTab && createdTab.id, tab);
     } catch {
       delete createProps.windowId;
       delete createProps.index;
       ignoreDashboardRefreshForLocalTabAction();
-      await chrome.tabs.create(createProps);
+      const createdTab = await chrome.tabs.create(createProps);
+      markLocalTabAction(createdTab && createdTab.id, tab);
     }
   }
 
@@ -850,6 +866,22 @@ function createFavoriteDeleteUndo(snapshot) {
   return {
     message: 'Favorite restored',
     run: () => restoreFavoriteSnapshot(snapshot),
+  };
+}
+
+async function deleteFavoriteSnapshot(snapshot) {
+  if (!snapshot || !snapshot.item) return;
+  await deleteFavoriteSite(snapshot.item.id);
+  await renderFavoritesSection();
+  const favorites = await getFavoriteSites();
+  syncOpenTabFavoriteButtons(favorites);
+}
+
+function createFavoriteAddUndo(snapshot) {
+  if (!snapshot || !snapshot.item || snapshot.wasExisting) return null;
+  return {
+    message: 'Favorite removed',
+    run: () => deleteFavoriteSnapshot(snapshot),
   };
 }
 
@@ -1847,17 +1879,43 @@ function ignoreDashboardRefreshForLocalTabAction() {
   dashboardRefreshTimer = null;
 }
 
-function shouldIgnoreDashboardRefresh() {
-  return Date.now() < dashboardRefreshIgnoreUntil;
+function markLocalTabAction(tabId, snapshot = null) {
+  if (!Number.isInteger(tabId)) return;
+  locallyManagedTabIds.add(tabId);
+  if (snapshot && snapshot.url) locallyManagedTabSnapshots.set(tabId, snapshot);
 }
 
-function scheduleDashboardRefresh() {
-  if (shouldIgnoreDashboardRefresh()) return;
+function getRefreshEventTabId(eventPayload) {
+  if (Number.isInteger(eventPayload)) return eventPayload;
+  if (eventPayload && Number.isInteger(eventPayload.id)) return eventPayload.id;
+  if (eventPayload && Number.isInteger(eventPayload.tabId)) return eventPayload.tabId;
+  return null;
+}
+
+function shouldIgnoreDashboardRefresh(tabId = null) {
+  return Date.now() < dashboardRefreshIgnoreUntil ||
+    (Number.isInteger(tabId) && locallyManagedTabIds.has(tabId));
+}
+
+function scheduleDashboardRefresh(eventPayload = null) {
+  const tabId = getRefreshEventTabId(eventPayload);
+  if (shouldIgnoreDashboardRefresh(tabId)) return;
   clearTimeout(dashboardRefreshTimer);
   dashboardRefreshTimer = setTimeout(refreshDashboardFromTabEvents, dashboardRefreshDelayMs);
 }
 
 function handleTabUpdatedForRefresh(_tabId, changeInfo = {}) {
+  const tabId = getRefreshEventTabId(_tabId);
+  if (locallyManagedTabIds.has(tabId)) {
+    if (changeInfo.status === 'complete') {
+      locallyManagedTabIds.delete(tabId);
+      locallyManagedTabSnapshots.delete(tabId);
+    }
+    return;
+  }
+
+  if (shouldIgnoreDashboardRefresh(tabId)) return;
+
   if (changeInfo.status === 'complete') {
     scheduleDashboardRefresh();
   }
@@ -1998,7 +2056,8 @@ document.addEventListener('click', async (e) => {
       const didFocus = await focusTab(url);
       if (!didFocus) {
         ignoreDashboardRefreshForLocalTabAction();
-        await chrome.tabs.create({ url });
+        const createdTab = await chrome.tabs.create({ url });
+        markLocalTabAction(createdTab && createdTab.id, { url, title: url });
       }
     }
     return;
@@ -2082,9 +2141,9 @@ document.addEventListener('click', async (e) => {
         setOpenTabFavoriteButtons(tabUrl, false);
         showToast('Removed from favorites', createFavoriteDeleteUndo(undoSnapshot));
       } else {
-        await saveFavoriteSite({ title: tabTitle, url: tabUrl });
+        const undoSnapshot = await saveFavoriteSite({ title: tabTitle, url: tabUrl });
         setOpenTabFavoriteButtons(tabUrl, true);
-        showToast('Added to favorites');
+        showToast('Added to favorites', createFavoriteAddUndo(undoSnapshot));
       }
       await renderFavoritesSection();
     } catch (err) {
@@ -2455,20 +2514,21 @@ document.addEventListener('submit', async (e) => {
   const urlInput  = document.getElementById('favoriteUrl');
   const title = nameInput ? nameInput.value : '';
   const url   = urlInput ? urlInput.value : '';
+  let undoSnapshot = null;
 
   try {
     if (favoriteEditingId) {
       await updateFavoriteSite(favoriteEditingId, { title, url });
       favoriteEditingId = null;
     } else {
-      await saveFavoriteSite({ title, url });
+      undoSnapshot = await saveFavoriteSite({ title, url });
     }
     if (nameInput) nameInput.value = '';
     if (urlInput) urlInput.value = '';
     favoriteNameWasEdited = false;
     setFavoriteFormOpen(false);
     await renderFavoritesSection();
-    showToast('Favorite saved');
+    showToast('Favorite saved', createFavoriteAddUndo(undoSnapshot));
   } catch {
     showToast('Enter a valid website URL');
   }

@@ -198,12 +198,20 @@ test('dashboard refreshes favorites when toolbar click updates storage', () => {
 test('dashboard auto-refreshes open tabs from Chrome tab events', () => {
   assert.match(appJs, /const dashboardRefreshDelayMs = 150;/);
   assert.match(appJs, /const localTabActionRefreshIgnoreMs = 800;/);
-  assert.match(appJs, /function scheduleDashboardRefresh\(\)/);
+  assert.match(appJs, /let locallyManagedTabIds = new Set\(\);/);
+  assert.match(appJs, /let locallyManagedTabSnapshots = new Map\(\);/);
+  assert.match(appJs, /function scheduleDashboardRefresh\(eventPayload = null\)/);
   assert.match(appJs, /function ignoreDashboardRefreshForLocalTabAction\(\)/);
-  assert.match(appJs, /function shouldIgnoreDashboardRefresh\(\)/);
+  assert.match(appJs, /function markLocalTabAction\(/);
+  assert.match(appJs, /function shouldIgnoreDashboardRefresh\(tabId = null\)/);
   assert.match(appJs, /async function refreshDashboardFromTabEvents\(\)/);
   assert.match(appJs, /function registerDashboardTabListeners\(\)/);
-  assert.match(appJs, /if \(shouldIgnoreDashboardRefresh\(\)\) return;/);
+  assert.match(appJs, /if \(shouldIgnoreDashboardRefresh\(tabId\)\) return;/);
+  assert.match(appJs, /locallyManagedTabIds\.has\(tabId\)/);
+  assert.match(appJs, /locallyManagedTabIds\.delete\(tabId\)/);
+  assert.match(appJs, /locallyManagedTabSnapshots\.get\(t\.id\)/);
+  assert.match(appJs, /t\.url \|\| t\.pendingUrl \|\| managedTabSnapshot/);
+  assert.match(appJs, /locallyManagedTabSnapshots\.delete\(tabId\)/);
   assert.match(appJs, /chrome\.tabs\.onCreated\.addListener\(scheduleDashboardRefresh\)/);
   assert.match(appJs, /chrome\.tabs\.onRemoved\.addListener\(scheduleDashboardRefresh\)/);
   assert.match(appJs, /chrome\.tabs\.onMoved\.addListener\(scheduleDashboardRefresh\)/);
@@ -223,7 +231,7 @@ test('local tab actions suppress automatic dashboard refresh flicker', () => {
   assert.ok(ignoreCalls.length >= 7);
   assert.match(appJs, /ignoreDashboardRefreshForLocalTabAction\(\);\s*await chrome\.tabs\.remove/);
   assert.match(appJs, /ignoreDashboardRefreshForLocalTabAction\(\);\s*await chrome\.tabs\.update/);
-  assert.match(appJs, /ignoreDashboardRefreshForLocalTabAction\(\);\s*await chrome\.tabs\.create/);
+  assert.match(appJs, /ignoreDashboardRefreshForLocalTabAction\(\);[\s\S]*await chrome\.tabs\.create/);
 });
 
 test('delete and close operations can be reverted from toast or keyboard', () => {
@@ -236,12 +244,15 @@ test('delete and close operations can be reverted from toast or keyboard', () =>
   assert.match(appJs, /async function runLastUndoAction\(\)/);
   assert.match(appJs, /function createClosedTabsUndo\(/);
   assert.match(appJs, /async function restoreClosedTabs\(/);
+  assert.match(appJs, /function createFavoriteAddUndo\(/);
   assert.match(appJs, /function createFavoriteDeleteUndo\(/);
   assert.match(appJs, /function createSavedTabDeleteUndo\(/);
   assert.match(appJs, /action === 'execute-undo'/);
   assert.match(appJs, /e\.key\.toLowerCase\(\) === 'z'/);
   assert.match(appJs, /e\.metaKey \|\| e\.ctrlKey/);
   assert.match(appJs, /showToast\('Tab closed', createClosedTabsUndo/);
+  assert.match(appJs, /showToast\('Added to favorites', createFavoriteAddUndo/);
+  assert.match(appJs, /showToast\('Favorite saved', createFavoriteAddUndo/);
   assert.match(appJs, /showToast\('Favorite deleted', createFavoriteDeleteUndo/);
   assert.match(appJs, /showToast\('Archived tab deleted', createSavedTabDeleteUndo/);
 });
