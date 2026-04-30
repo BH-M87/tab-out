@@ -53,6 +53,13 @@
     <div class="section-header favorites-header">
       <h2>Favorites</h2>
       <div class="section-line"></div>
+      <div class="favorite-sort" role="group" aria-label="Sort favorites">
+        <button class="favorite-sort-option active" data-action="sort-favorites" data-sort-mode="custom" type="button">Custom</button>
+        <button class="favorite-sort-option" data-action="sort-favorites" data-sort-mode="alphabet" type="button">Alphabet</button>
+        <button class="favorite-sort-option" data-action="sort-favorites" data-sort-mode="created" type="button">Added</button>
+        <button class="favorite-sort-option" data-action="sort-favorites" data-sort-mode="visited" type="button">Visited</button>
+      </div>
+      <button class="favorite-grouping-toggle active" data-action="toggle-favorite-grouping" type="button" aria-pressed="true">Group</button>
       <button class="favorite-toggle" data-action="toggle-favorite-form" title="Add favorite" aria-label="Add favorite">+</button>
     </div>
     <form class="favorite-form" id="favoriteForm" style="display:none">

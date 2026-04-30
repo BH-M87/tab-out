@@ -26,7 +26,10 @@
 // All open tabs — populated by fetchOpenTabs()
 let openTabs = [];
 let favoriteNameWasEdited = false;
+let favoriteEditingId = null;
 let favoriteDragState = null;
+const favoriteGroupPreviewLimit = 3;
+const favoriteSortModes = ['custom', 'alphabet', 'created', 'visited'];
 
 /**
  * fetchOpenTabs()
@@ -118,7 +121,7 @@ async function closeTabsExact(urls) {
  * then hostname fallback). Also brings the window to the front.
  */
 async function focusTab(url) {
-  if (!url) return;
+  if (!url) return false;
   const allTabs = await chrome.tabs.query({});
   const currentWindow = await chrome.windows.getCurrent();
 
@@ -136,12 +139,13 @@ async function focusTab(url) {
     } catch {}
   }
 
-  if (matches.length === 0) return;
+  if (matches.length === 0) return false;
 
   // Prefer a match in a different window so it actually switches windows
   const match = matches.find(t => t.windowId !== currentWindow.id) || matches[0];
   await chrome.tabs.update(match.id, { active: true });
   await chrome.windows.update(match.windowId, { focused: true });
+  return true;
 }
 
 /**
@@ -304,7 +308,73 @@ async function deleteSavedTab(id) {
 
 async function getFavoriteSites() {
   const { favorites = [] } = await chrome.storage.local.get('favorites');
-  return favorites;
+  const normalized = favorites.map(ensureFavoriteMetadata);
+  const changed = JSON.stringify(normalized) !== JSON.stringify(favorites);
+  if (changed) await chrome.storage.local.set({ favorites: normalized });
+  return normalized;
+}
+
+async function getFavoriteSortMode() {
+  const { favoriteSortMode = 'custom' } = await chrome.storage.local.get('favoriteSortMode');
+  return favoriteSortModes.includes(favoriteSortMode)
+    ? favoriteSortMode
+    : 'custom';
+}
+
+async function setFavoriteSortMode(mode) {
+  if (!favoriteSortModes.includes(mode)) return;
+  await chrome.storage.local.set({ favoriteSortMode: mode });
+}
+
+async function getFavoriteGroupingEnabled() {
+  const { favoriteGroupingEnabled = true } = await chrome.storage.local.get('favoriteGroupingEnabled');
+  return favoriteGroupingEnabled !== false;
+}
+
+async function setFavoriteGroupingEnabled(enabled) {
+  await chrome.storage.local.set({ favoriteGroupingEnabled: Boolean(enabled) });
+}
+
+async function getFavoriteExpandedDomains() {
+  const { favoriteExpandedDomains = [] } = await chrome.storage.local.get('favoriteExpandedDomains');
+  return Array.isArray(favoriteExpandedDomains) ? favoriteExpandedDomains : [];
+}
+
+async function toggleFavoriteGroupExpanded(domain) {
+  if (!domain) return;
+  const expandedDomains = await getFavoriteExpandedDomains();
+  const next = expandedDomains.includes(domain)
+    ? expandedDomains.filter(item => item !== domain)
+    : [...expandedDomains, domain];
+  await chrome.storage.local.set({ favoriteExpandedDomains: next });
+}
+
+function getFavoriteDomain(url) {
+  try {
+    return new URL(url).hostname.replace(/^www\./, '') || 'Unknown';
+  } catch {
+    return 'Unknown';
+  }
+}
+
+function getFavoriteTimestampFallback(site) {
+  if (site && site.createdAt) return site.createdAt;
+  const idTime = Number(site && site.id);
+  if (Number.isFinite(idTime) && idTime > 0) {
+    return new Date(idTime).toISOString();
+  }
+  return new Date().toISOString();
+}
+
+function ensureFavoriteMetadata(site) {
+  const createdAt = getFavoriteTimestampFallback(site);
+  return {
+    ...site,
+    id: site.id || Date.now().toString(),
+    domain: site.domain || getFavoriteDomain(site.url),
+    createdAt,
+    lastVisitedAt: site.lastVisitedAt || createdAt,
+  };
 }
 
 function normalizeFavoriteUrl(value) {
@@ -340,23 +410,28 @@ function autofillFavoriteNameFromUrl() {
   if (suggestedTitle) nameInput.value = suggestedTitle;
 }
 
-function setFavoriteFormOpen(open) {
+function setFavoriteFormOpen(open, site = null) {
   const form = document.getElementById('favoriteForm');
   const nameInput = document.getElementById('favoriteName');
   const urlInput = document.getElementById('favoriteUrl');
+  const addButton = form ? form.querySelector('.favorite-add') : null;
   const toggle = document.querySelector('[data-action="toggle-favorite-form"]');
   if (!form) return;
 
   form.style.display = open ? 'grid' : 'none';
   if (toggle) toggle.classList.toggle('open', open);
+  favoriteEditingId = site ? site.id : null;
 
   if (open) {
     favoriteNameWasEdited = false;
-    if (nameInput) nameInput.value = '';
+    if (nameInput) nameInput.value = site ? (site.title || '') : '';
     if (urlInput) {
-      urlInput.value = '';
+      urlInput.value = site ? (site.url || '') : '';
       urlInput.focus();
     }
+    if (addButton) addButton.textContent = site ? 'Save' : 'Add';
+  } else {
+    if (addButton) addButton.textContent = 'Add';
   }
 }
 
@@ -365,27 +440,90 @@ async function saveFavoriteSite({ title, url }) {
   const parsed = new URL(normalizedUrl);
   const displayTitle = (title || '').trim() || friendlyDomain(parsed.hostname) || parsed.hostname;
   const { favorites = [] } = await chrome.storage.local.get('favorites');
-  const existing = favorites.find(site => site.url === normalizedUrl);
+  const normalizedFavorites = favorites.map(ensureFavoriteMetadata);
+  const existing = normalizedFavorites.find(site => site.url === normalizedUrl);
+  const now = new Date().toISOString();
 
   if (existing) {
     existing.title = displayTitle;
-    existing.updatedAt = new Date().toISOString();
+    existing.domain = getFavoriteDomain(normalizedUrl);
+    existing.updatedAt = now;
   } else {
-    favorites.unshift({
+    normalizedFavorites.unshift({
       id: Date.now().toString(),
       title: displayTitle,
       url: normalizedUrl,
-      createdAt: new Date().toISOString(),
+      domain: getFavoriteDomain(normalizedUrl),
+      createdAt: now,
+      lastVisitedAt: now,
     });
   }
 
-  await chrome.storage.local.set({ favorites });
+  await chrome.storage.local.set({ favorites: normalizedFavorites });
+}
+
+async function updateFavoriteSite(id, { title, url }) {
+  const normalizedUrl = normalizeFavoriteUrl(url);
+  const parsed = new URL(normalizedUrl);
+  const displayTitle = (title || '').trim() || friendlyDomain(parsed.hostname) || parsed.hostname;
+  const { favorites = [] } = await chrome.storage.local.get('favorites');
+  const normalizedFavorites = favorites.map(ensureFavoriteMetadata);
+  const favorite = normalizedFavorites.find(site => site.id === id);
+  if (!favorite) return;
+
+  favorite.title = displayTitle;
+  favorite.url = normalizedUrl;
+  favorite.domain = getFavoriteDomain(normalizedUrl);
+  favorite.updatedAt = new Date().toISOString();
+
+  await chrome.storage.local.set({ favorites: normalizedFavorites });
 }
 
 async function deleteFavoriteSite(id) {
   const { favorites = [] } = await chrome.storage.local.get('favorites');
   await chrome.storage.local.set({
     favorites: favorites.filter(site => site.id !== id),
+  });
+}
+
+async function getFavoriteByUrl(url) {
+  if (!url) return null;
+  let normalizedUrl;
+  try {
+    normalizedUrl = normalizeFavoriteUrl(url);
+  } catch {
+    return null;
+  }
+
+  const favorites = await getFavoriteSites();
+  return favorites.find(site => site.url === normalizedUrl) || null;
+}
+
+function isFavoriteUrl(url, favoriteUrls) {
+  if (!url || !favoriteUrls) return false;
+  try {
+    return favoriteUrls.has(normalizeFavoriteUrl(url));
+  } catch {
+    return false;
+  }
+}
+
+function setOpenTabFavoriteButtons(url, active) {
+  document.querySelectorAll('[data-action="favorite-open-tab"]').forEach(button => {
+    if (button.dataset.tabUrl !== url) return;
+    button.classList.toggle('active', active);
+    button.setAttribute('title', active ? 'Remove from favorites' : 'Add to favorites');
+    button.setAttribute('aria-pressed', String(active));
+  });
+}
+
+function syncOpenTabFavoriteButtons(favorites = []) {
+  const favoriteUrls = new Set(favorites.map(ensureFavoriteMetadata).map(site => site.url));
+  document.querySelectorAll('[data-action="favorite-open-tab"]').forEach(button => {
+    const active = isFavoriteUrl(button.dataset.tabUrl, favoriteUrls);
+    button.classList.toggle('active', active);
+    button.setAttribute('title', active ? 'Remove from favorites' : 'Add to favorites');
+    button.setAttribute('aria-pressed', String(active));
   });
 }
 
@@ -403,6 +541,51 @@ async function reorderFavoriteSites(orderedIds) {
   }
 
   await chrome.storage.local.set({ favorites: reordered });
+}
+
+async function markFavoriteVisited(id) {
+  const { favorites = [] } = await chrome.storage.local.get('favorites');
+  const normalizedFavorites = favorites.map(ensureFavoriteMetadata);
+  const favorite = normalizedFavorites.find(site => site.id === id);
+  if (!favorite) return;
+
+  favorite.lastVisitedAt = new Date().toISOString();
+  await chrome.storage.local.set({ favorites: normalizedFavorites });
+}
+
+function sortFavoriteSites(sites, mode) {
+  const collator = new Intl.Collator(undefined, { sensitivity: 'base' });
+  const sorted = [...sites];
+
+  if (mode === 'custom') return sorted;
+
+  if (mode === 'created') {
+    return sorted.sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
+  }
+
+  if (mode === 'visited') {
+    return sorted.sort((a, b) => new Date(b.lastVisitedAt || 0) - new Date(a.lastVisitedAt || 0));
+  }
+
+  return sorted.sort((a, b) => collator.compare(a.title || a.url || '', b.title || b.url || ''));
+}
+
+function groupFavoriteSitesByDomain(sites, sortMode) {
+  const groupsByDomain = new Map();
+
+  for (const site of sortFavoriteSites(sites, sortMode)) {
+    const domain = site.domain || getFavoriteDomain(site.url);
+    if (!groupsByDomain.has(domain)) {
+      groupsByDomain.set(domain, { domain, sites: [] });
+    }
+    groupsByDomain.get(domain).sites.push(site);
+  }
+
+  const groups = Array.from(groupsByDomain.values());
+  if (sortMode === 'alphabet') {
+    return groups.sort((a, b) => a.domain.localeCompare(b.domain, undefined, { sensitivity: 'base' }));
+  }
+  return groups;
 }
 
 
@@ -831,6 +1014,9 @@ const ICONS = {
   close:   `<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18 18 6M6 6l12 12" /></svg>`,
   archive: `<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M20.25 7.5l-.625 10.632a2.25 2.25 0 0 1-2.247 2.118H6.622a2.25 2.25 0 0 1-2.247-2.118L3.75 7.5m6 4.125l2.25 2.25m0 0l2.25 2.25M12 13.875l2.25-2.25M12 13.875l-2.25 2.25M3.375 7.5h17.25c.621 0 1.125-.504 1.125-1.125v-1.5c0-.621-.504-1.125-1.125-1.125H3.375c-.621 0-1.125.504-1.125 1.125v1.5c0 .621.504 1.125 1.125 1.125Z" /></svg>`,
   focus:   `<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="m4.5 19.5 15-15m0 0H8.25m11.25 0v11.25" /></svg>`,
+  favorite:`<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M11.48 3.499a.562.562 0 0 1 1.04 0l2.125 5.111a.563.563 0 0 0 .475.345l5.518.442c.499.04.701.663.321.988l-4.204 3.602a.563.563 0 0 0-.182.557l1.285 5.385a.562.562 0 0 1-.84.61l-4.725-2.885a.562.562 0 0 0-.586 0L6.982 20.54a.562.562 0 0 1-.84-.61l1.285-5.386a.562.562 0 0 0-.182-.557L3.04 10.385a.562.562 0 0 1 .321-.988l5.518-.442a.563.563 0 0 0 .475-.345L11.48 3.5Z" /></svg>`,
+  bookmark:`<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M17.593 3.322c1.1.128 1.907 1.077 1.907 2.185V21L12 17.25 4.5 21V5.507c0-1.108.806-2.057 1.907-2.185a48.507 48.507 0 0 1 11.186 0Z" /></svg>`,
+  edit:    `<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="m16.862 4.487 1.687-1.688a1.875 1.875 0 1 1 2.652 2.652L10.582 16.07a4.5 4.5 0 0 1-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 0 1 1.13-1.897l8.932-8.931Z" /></svg>`,
   trash:   `<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="m14.74 9-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673A2.25 2.25 0 0 1 15.916 21H8.084a2.25 2.25 0 0 1-2.244-1.327L4.772 5.79m14.456 0a48.108 48.108 0 0 0-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 0 1 3.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 0 0-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 0 0-7.5 0" /></svg>`,
 };
 
@@ -889,7 +1075,7 @@ function checkTabOutDupes() {
    OVERFLOW CHIPS ("+N more" expand button in domain cards)
    ---------------------------------------------------------------- */
 
-function buildOverflowChips(hiddenTabs, urlCounts = {}) {
+function buildOverflowChips(hiddenTabs, urlCounts = {}, favoriteUrls = new Set()) {
   const hiddenChips = hiddenTabs.map(tab => {
     const label    = cleanTitle(smartTitle(stripTitleNoise(tab.title || ''), tab.url), '');
     const count    = urlCounts[tab.url] || 1;
@@ -897,6 +1083,8 @@ function buildOverflowChips(hiddenTabs, urlCounts = {}) {
     const chipClass = count > 1 ? ' chip-has-dupes' : '';
     const safeUrl   = (tab.url || '').replace(/"/g, '&quot;');
     const safeTitle = label.replace(/"/g, '&quot;');
+    const favoriteActive = isFavoriteUrl(tab.url, favoriteUrls);
+    const favoriteClass = favoriteActive ? 'chip-action chip-favorite active' : 'chip-action chip-favorite';
     let domain = '';
     try { domain = new URL(tab.url).hostname; } catch {}
     const faviconUrl = domain ? `https://www.google.com/s2/favicons?domain=${domain}&sz=16` : '';
@@ -904,11 +1092,14 @@ function buildOverflowChips(hiddenTabs, urlCounts = {}) {
       ${faviconUrl ? `<img class="chip-favicon" src="${faviconUrl}" alt="" onerror="this.style.display='none'">` : ''}
       <span class="chip-text">${label}</span>${dupeTag}
       <div class="chip-actions">
+        <button class="${favoriteClass}" data-action="favorite-open-tab" data-tab-url="${safeUrl}" data-tab-title="${safeTitle}" title="${favoriteActive ? 'Remove from favorites' : 'Add to favorites'}" aria-pressed="${favoriteActive}">
+          ${ICONS.favorite}
+        </button>
         <button class="chip-action chip-save" data-action="defer-single-tab" data-tab-url="${safeUrl}" data-tab-title="${safeTitle}" title="Save for later">
-          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M17.593 3.322c1.1.128 1.907 1.077 1.907 2.185V21L12 17.25 4.5 21V5.507c0-1.108.806-2.057 1.907-2.185a48.507 48.507 0 0 1 11.186 0Z" /></svg>
+          ${ICONS.bookmark}
         </button>
         <button class="chip-action chip-close" data-action="close-single-tab" data-tab-url="${safeUrl}" title="Close this tab">
-          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18 18 6M6 6l12 12" /></svg>
+          ${ICONS.close}
         </button>
       </div>
     </div>`;
@@ -932,7 +1123,7 @@ function buildOverflowChips(hiddenTabs, urlCounts = {}) {
  * Builds the HTML for one domain group card.
  * group = { domain: string, tabs: [{ url, title, id, windowId, active }] }
  */
-function renderDomainCard(group) {
+function renderDomainCard(group, favoriteUrls = new Set()) {
   const tabs      = group.tabs || [];
   const tabCount  = tabs.length;
   const isLanding = group.domain === '__landing-pages__';
@@ -949,6 +1140,17 @@ function renderDomainCard(group) {
     ${ICONS.tabs}
     ${tabCount} tab${tabCount !== 1 ? 's' : ''} open
   </span>`;
+  const closeGroupButton = `<button class="open-tabs-badge open-tabs-close" data-action="close-domain-tabs" data-domain-id="${stableId}" type="button">
+    ${ICONS.close}
+    Close all
+  </button>`;
+  const dupeUrlsEncoded = dupeUrls.map(([url]) => encodeURIComponent(url)).join(',');
+  const closeDupesButton = hasDupes
+    ? `<button class="open-tabs-badge open-tabs-close open-tabs-dedupe" data-action="dedup-keep-one" data-dupe-urls="${dupeUrlsEncoded}" type="button">
+        ${ICONS.close}
+        Close duplicate${totalExtras !== 1 ? 's' : ''}
+      </button>`
+    : '';
 
   const dupeBadge = hasDupes
     ? `<span class="open-tabs-badge" style="color:var(--accent-amber);background:rgba(200,113,58,0.08);">
@@ -978,6 +1180,8 @@ function renderDomainCard(group) {
     const chipClass = count > 1 ? ' chip-has-dupes' : '';
     const safeUrl   = (tab.url || '').replace(/"/g, '&quot;');
     const safeTitle = label.replace(/"/g, '&quot;');
+    const favoriteActive = isFavoriteUrl(tab.url, favoriteUrls);
+    const favoriteClass = favoriteActive ? 'chip-action chip-favorite active' : 'chip-action chip-favorite';
     let domain = '';
     try { domain = new URL(tab.url).hostname; } catch {}
     const faviconUrl = domain ? `https://www.google.com/s2/favicons?domain=${domain}&sz=16` : '';
@@ -985,29 +1189,18 @@ function renderDomainCard(group) {
       ${faviconUrl ? `<img class="chip-favicon" src="${faviconUrl}" alt="" onerror="this.style.display='none'">` : ''}
       <span class="chip-text">${label}</span>${dupeTag}
       <div class="chip-actions">
+        <button class="${favoriteClass}" data-action="favorite-open-tab" data-tab-url="${safeUrl}" data-tab-title="${safeTitle}" title="${favoriteActive ? 'Remove from favorites' : 'Add to favorites'}" aria-pressed="${favoriteActive}">
+          ${ICONS.favorite}
+        </button>
         <button class="chip-action chip-save" data-action="defer-single-tab" data-tab-url="${safeUrl}" data-tab-title="${safeTitle}" title="Save for later">
-          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M17.593 3.322c1.1.128 1.907 1.077 1.907 2.185V21L12 17.25 4.5 21V5.507c0-1.108.806-2.057 1.907-2.185a48.507 48.507 0 0 1 11.186 0Z" /></svg>
+          ${ICONS.bookmark}
         </button>
         <button class="chip-action chip-close" data-action="close-single-tab" data-tab-url="${safeUrl}" title="Close this tab">
-          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18 18 6M6 6l12 12" /></svg>
+          ${ICONS.close}
         </button>
       </div>
     </div>`;
-  }).join('') + (extraCount > 0 ? buildOverflowChips(uniqueTabs.slice(8), urlCounts) : '');
-
-  let actionsHtml = `
-    <button class="action-btn close-tabs" data-action="close-domain-tabs" data-domain-id="${stableId}">
-      ${ICONS.close}
-      Close all ${tabCount} tab${tabCount !== 1 ? 's' : ''}
-    </button>`;
-
-  if (hasDupes) {
-    const dupeUrlsEncoded = dupeUrls.map(([url]) => encodeURIComponent(url)).join(',');
-    actionsHtml += `
-      <button class="action-btn" data-action="dedup-keep-one" data-dupe-urls="${dupeUrlsEncoded}">
-        Close ${totalExtras} duplicate${totalExtras !== 1 ? 's' : ''}
-      </button>`;
-  }
+  }).join('') + (extraCount > 0 ? buildOverflowChips(uniqueTabs.slice(8), urlCounts, favoriteUrls) : '');
 
   return `
     <div class="mission-card domain-card ${hasDupes ? 'has-amber-bar' : 'has-neutral-bar'}" data-domain-id="${stableId}">
@@ -1016,10 +1209,11 @@ function renderDomainCard(group) {
         <div class="mission-top">
           <span class="mission-name">${isLanding ? 'Homepages' : (group.label || friendlyDomain(group.domain))}</span>
           ${tabBadge}
+          ${closeGroupButton}
           ${dupeBadge}
+          ${closeDupesButton}
         </div>
         <div class="mission-pages">${pageChips}</div>
-        <div class="actions">${actionsHtml}</div>
       </div>
       <div class="mission-meta">
         <div class="mission-page-count">${tabCount}</div>
@@ -1040,6 +1234,11 @@ async function renderFavoritesSection() {
 
   try {
     const favorites = await getFavoriteSites();
+    const sortMode = await getFavoriteSortMode();
+    const groupingEnabled = await getFavoriteGroupingEnabled();
+    const expandedDomains = await getFavoriteExpandedDomains();
+    updateFavoriteSortControls(sortMode);
+    updateFavoriteGroupingControl(groupingEnabled);
 
     if (favorites.length === 0) {
       list.innerHTML = '';
@@ -1048,8 +1247,13 @@ async function renderFavoritesSection() {
       return;
     }
 
-    list.innerHTML = favorites.map(renderFavoriteItem).join('');
-    list.style.display = 'grid';
+    if (groupingEnabled) {
+      const groups = groupFavoriteSitesByDomain(favorites, sortMode);
+      list.innerHTML = renderFavoriteGroupedList(groups, expandedDomains, sortMode);
+    } else {
+      list.innerHTML = renderFavoriteFlatList(sortFavoriteSites(favorites, sortMode));
+    }
+    list.style.display = 'block';
     if (empty) empty.style.display = 'none';
   } catch (err) {
     console.warn('[tab-out] Could not load favorites:', err);
@@ -1057,14 +1261,79 @@ async function renderFavoritesSection() {
   }
 }
 
+function updateFavoriteSortControls(sortMode) {
+  document.querySelectorAll('[data-action="sort-favorites"]').forEach(button => {
+    button.classList.toggle('active', button.dataset.sortMode === sortMode);
+    button.setAttribute('aria-pressed', String(button.dataset.sortMode === sortMode));
+  });
+}
+
+function updateFavoriteGroupingControl(groupingEnabled) {
+  const button = document.querySelector('[data-action="toggle-favorite-grouping"]');
+  if (!button) return;
+  button.classList.toggle('active', groupingEnabled);
+  button.setAttribute('aria-pressed', String(groupingEnabled));
+}
+
+function renderFavoriteFlatList(sites) {
+  return `<div class="favorite-group-grid favorite-flat-grid">
+    ${sites.map(renderFavoriteItem).join('')}
+  </div>`;
+}
+
+function renderFavoriteGroupedList(groups, expandedDomains, sortMode) {
+  const cards = [];
+
+  for (const group of groups) {
+    if (group.sites.length === 1) {
+      cards.push(renderFavoriteItem(group.sites[0]));
+    } else {
+      cards.push(renderFavoriteGroup(group, expandedDomains.includes(group.domain)));
+    }
+  }
+
+  return `<div class="favorite-group-grid favorite-sort-${sortMode}">${cards.join('')}</div>`;
+}
+
+function renderFavoriteGroup(group, expanded = false) {
+  return renderFavoriteGroupCard(group, expanded);
+}
+
+function renderFavoriteGroupCard(group, expanded) {
+  const safeDomain = escapeHtml(group.domain);
+  const label = escapeHtml(friendlyDomain(group.domain) || group.domain);
+  const count = group.sites.length;
+  const visibleSites = expanded ? group.sites : group.sites.slice(0, favoriteGroupPreviewLimit);
+  const overflowCount = Math.max(count - favoriteGroupPreviewLimit, 0);
+  const stateLabel = expanded ? 'Show less' : (overflowCount > 0 ? `+${overflowCount} more` : '');
+  const spanSize = Math.min(Math.max(visibleSites.length, 1), favoriteGroupPreviewLimit);
+  const expandedClass = expanded ? ' favorite-group-expanded' : '';
+
+  return `
+    <section class="favorite-group favorite-group-card favorite-group-span-${spanSize}${expandedClass}" data-favorite-domain="${safeDomain}">
+      <button class="favorite-group-header" data-action="toggle-favorite-group" data-favorite-domain="${safeDomain}" type="button" aria-expanded="${expanded}">
+        <div>
+          <div class="favorite-group-title">${label}</div>
+          <div class="favorite-group-count">${count} site${count !== 1 ? 's' : ''}</div>
+        </div>
+        ${stateLabel ? `<span class="favorite-group-state">${stateLabel}</span>` : ''}
+      </button>
+      <div class="favorite-group-preview">
+        ${visibleSites.map(renderFavoriteItem).join('')}
+      </div>
+    </section>`;
+}
+
 function renderFavoriteItem(site) {
-  let domain = '';
-  try { domain = new URL(site.url).hostname.replace(/^www\./, ''); } catch {}
+  const normalizedSite = ensureFavoriteMetadata(site);
+  const domain = normalizedSite.domain || getFavoriteDomain(normalizedSite.url);
   const faviconUrl = domain ? `https://www.google.com/s2/favicons?domain=${domain}&sz=16` : '';
-  const safeTitle = escapeHtml(site.title || site.url);
-  const safeUrl = escapeHtml(site.url || '');
+  const safeTitle = escapeHtml(normalizedSite.title || normalizedSite.url);
+  const safeUrl = escapeHtml(normalizedSite.url || '');
   const safeDomain = escapeHtml(domain);
-  const safeId = escapeHtml(site.id);
+  const safeId = escapeHtml(normalizedSite.id);
+  const addedLabel = escapeHtml(formatFavoriteTimestamp(normalizedSite.createdAt));
+  const visitedLabel = escapeHtml(formatFavoriteTimestamp(normalizedSite.lastVisitedAt));
 
   return `
     <div class="favorite-item" data-action="drag-favorite" data-favorite-id="${safeId}" draggable="true">
@@ -1078,15 +1347,30 @@ function renderFavoriteItem(site) {
           <circle cx="11" cy="12" r="1.1" />
         </svg>
       </span>
-      <button class="favorite-link" data-action="open-favorite" data-favorite-url="${safeUrl}" title="${safeTitle}">
+      <button class="favorite-link" data-action="open-favorite" data-favorite-id="${safeId}" data-favorite-url="${safeUrl}" title="${safeTitle}">
         ${faviconUrl ? `<img class="favorite-favicon" src="${faviconUrl}" alt="" onerror="this.style.display='none'">` : ''}
         <span class="favorite-title">${safeTitle}</span>
         <span class="favorite-domain">${safeDomain}</span>
+        <span class="favorite-meta">Added ${addedLabel} · Visited ${visitedLabel}</span>
+      </button>
+      <button class="favorite-edit" data-action="edit-favorite" data-favorite-id="${safeId}" title="Edit favorite">
+        ${ICONS.edit}
       </button>
       <button class="favorite-delete" data-action="delete-favorite" data-favorite-id="${safeId}" title="Delete favorite">
         ${ICONS.trash}
       </button>
     </div>`;
+}
+
+function formatFavoriteTimestamp(value) {
+  if (!value) return 'never';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return 'never';
+  return date.toLocaleDateString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+  });
 }
 
 
@@ -1349,11 +1633,12 @@ async function renderStaticDashboard() {
   const openTabsMissionsEl   = document.getElementById('openTabsMissions');
   const openTabsSectionCount = document.getElementById('openTabsSectionCount');
   const openTabsSectionTitle = document.getElementById('openTabsSectionTitle');
+  const favoriteUrls         = new Set((await getFavoriteSites()).map(site => site.url));
 
   if (domainGroups.length > 0 && openTabsSection) {
     if (openTabsSectionTitle) openTabsSectionTitle.textContent = 'Open tabs';
     openTabsSectionCount.innerHTML = `${domainGroups.length} domain${domainGroups.length !== 1 ? 's' : ''} &nbsp;&middot;&nbsp; <button class="action-btn close-tabs" data-action="close-all-open-tabs" style="font-size:11px;padding:3px 10px;">${ICONS.close} Close all ${realTabs.length} tabs</button>`;
-    openTabsMissionsEl.innerHTML = domainGroups.map(g => renderDomainCard(g)).join('');
+    openTabsMissionsEl.innerHTML = domainGroups.map(g => renderDomainCard(g, favoriteUrls)).join('');
     openTabsSection.style.display = 'block';
   } else if (openTabsSection) {
     openTabsSection.style.display = 'none';
@@ -1398,11 +1683,51 @@ document.addEventListener('click', async (e) => {
     return;
   }
 
+  // ---- Sort favorite websites ----
+  if (action === 'sort-favorites') {
+    const mode = actionEl.dataset.sortMode;
+    await setFavoriteSortMode(mode);
+    await renderFavoritesSection();
+    return;
+  }
+
+  // ---- Toggle domain grouping for favorite websites ----
+  if (action === 'toggle-favorite-grouping') {
+    const enabled = await getFavoriteGroupingEnabled();
+    await setFavoriteGroupingEnabled(!enabled);
+    await renderFavoritesSection();
+    return;
+  }
+
+  // ---- Expand/collapse a compact favorite domain group ----
+  if (action === 'toggle-favorite-group') {
+    const domain = actionEl.dataset.favoriteDomain;
+    await toggleFavoriteGroupExpanded(domain);
+    await renderFavoritesSection();
+    return;
+  }
+
   // ---- Open a favorite website ----
   if (action === 'open-favorite') {
     e.preventDefault();
+    const id = actionEl.dataset.favoriteId;
     const url = actionEl.dataset.favoriteUrl;
-    if (url) await chrome.tabs.create({ url });
+    if (id) await markFavoriteVisited(id);
+    if (url) {
+      const didFocus = await focusTab(url);
+      if (!didFocus) await chrome.tabs.create({ url });
+    }
+    return;
+  }
+
+  // ---- Edit a favorite website ----
+  if (action === 'edit-favorite') {
+    e.stopPropagation();
+    const id = actionEl.dataset.favoriteId;
+    if (!id) return;
+
+    const favorite = (await getFavoriteSites()).find(site => site.id === id);
+    if (favorite) setFavoriteFormOpen(true, favorite);
     return;
   }
 
@@ -1454,6 +1779,32 @@ document.addEventListener('click', async (e) => {
   if (action === 'focus-tab') {
     const tabUrl = actionEl.dataset.tabUrl;
     if (tabUrl) await focusTab(tabUrl);
+    return;
+  }
+
+  // ---- Toggle an open tab in favorites ----
+  if (action === 'favorite-open-tab') {
+    e.stopPropagation();
+    const tabUrl = actionEl.dataset.tabUrl;
+    const tabTitle = actionEl.dataset.tabTitle || tabUrl;
+    if (!tabUrl) return;
+
+    try {
+      const existingFavorite = await getFavoriteByUrl(tabUrl);
+      if (existingFavorite) {
+        await deleteFavoriteSite(existingFavorite.id);
+        setOpenTabFavoriteButtons(tabUrl, false);
+        showToast('Removed from favorites');
+      } else {
+        await saveFavoriteSite({ title: tabTitle, url: tabUrl });
+        setOpenTabFavoriteButtons(tabUrl, true);
+        showToast('Added to favorites');
+      }
+      await renderFavoritesSection();
+    } catch (err) {
+      console.error('[tab-out] Failed to toggle open tab favorite:', err);
+      showToast('Failed to update favorite');
+    }
     return;
   }
 
@@ -1736,7 +2087,8 @@ document.addEventListener('dragover', (e) => {
   list.querySelectorAll('.favorite-item.drag-over').forEach(item => item.classList.remove('drag-over'));
 
   if (!target) {
-    list.appendChild(dragging);
+    const lastContainer = list.querySelector('.favorite-group-preview:last-child, .favorite-group-grid:last-child');
+    if (lastContainer) lastContainer.appendChild(dragging);
     favoriteDragState.changed = true;
     return;
   }
@@ -1745,7 +2097,7 @@ document.addEventListener('dragover', (e) => {
 
   const placement = getFavoriteDropPlacement(target, e);
   target.classList.add('drag-over');
-  list.insertBefore(dragging, placement === 'after' ? target.nextSibling : target);
+  target.parentElement.insertBefore(dragging, placement === 'after' ? target.nextSibling : target);
   favoriteDragState.changed = true;
 });
 
@@ -1763,6 +2115,7 @@ document.addEventListener('drop', async (e) => {
     .filter(Boolean);
 
   await reorderFavoriteSites(orderedIds);
+  await setFavoriteSortMode('custom');
   clearFavoriteDragClasses();
   showToast('Favorites reordered');
 });
@@ -1778,8 +2131,12 @@ document.addEventListener('dragend', async () => {
 });
 
 chrome.storage.onChanged.addListener((changes, areaName) => {
-  if (areaName === 'local' && changes.favorites) {
+  if (
+    areaName === 'local' &&
+    (changes.favorites || changes.favoriteSortMode || changes.favoriteGroupingEnabled || changes.favoriteExpandedDomains)
+  ) {
     renderFavoritesSection();
+    if (changes.favorites) syncOpenTabFavoriteButtons(changes.favorites.newValue || []);
   }
 });
 
@@ -1793,7 +2150,12 @@ document.addEventListener('submit', async (e) => {
   const url   = urlInput ? urlInput.value : '';
 
   try {
-    await saveFavoriteSite({ title, url });
+    if (favoriteEditingId) {
+      await updateFavoriteSite(favoriteEditingId, { title, url });
+      favoriteEditingId = null;
+    } else {
+      await saveFavoriteSite({ title, url });
+    }
     if (nameInput) nameInput.value = '';
     if (urlInput) urlInput.value = '';
     favoriteNameWasEdited = false;

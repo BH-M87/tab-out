@@ -33,6 +33,24 @@ function getFallbackFavoriteTitle(url) {
   }
 }
 
+function getFavoriteDomain(url) {
+  try {
+    return new URL(url).hostname.replace(/^www\./, '') || 'Unknown';
+  } catch {
+    return 'Unknown';
+  }
+}
+
+function ensureFavoriteMetadata(site) {
+  const createdAt = site.createdAt || new Date().toISOString();
+  return {
+    ...site,
+    domain: site.domain || getFavoriteDomain(site.url),
+    createdAt,
+    lastVisitedAt: site.lastVisitedAt || createdAt,
+  };
+}
+
 async function flashActionBadge(text, color) {
   try {
     await chrome.action.setBadgeText({ text });
@@ -60,23 +78,29 @@ async function saveCurrentTabAsFavorite(tab) {
   const url = tab.url;
   const title = (tab.title || '').trim() || getFallbackFavoriteTitle(url);
   const { favorites = [] } = await chrome.storage.local.get('favorites');
-  const existingIndex = favorites.findIndex(site => site.url === url);
+  const normalizedFavorites = favorites.map(ensureFavoriteMetadata);
+  const existingIndex = normalizedFavorites.findIndex(site => site.url === url);
+  const now = new Date().toISOString();
 
   if (existingIndex !== -1) {
-    const [existing] = favorites.splice(existingIndex, 1);
+    const [existing] = normalizedFavorites.splice(existingIndex, 1);
     existing.title = title;
-    existing.updatedAt = new Date().toISOString();
-    favorites.unshift(existing);
+    existing.domain = getFavoriteDomain(url);
+    existing.lastVisitedAt = now;
+    existing.updatedAt = now;
+    normalizedFavorites.unshift(existing);
   } else {
-    favorites.unshift({
+    normalizedFavorites.unshift({
       id: Date.now().toString(),
       title,
       url,
-      createdAt: new Date().toISOString(),
+      domain: getFavoriteDomain(url),
+      createdAt: now,
+      lastVisitedAt: now,
     });
   }
 
-  await chrome.storage.local.set({ favorites });
+  await chrome.storage.local.set({ favorites: normalizedFavorites });
   return true;
 }
 
